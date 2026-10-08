@@ -1,0 +1,26 @@
+{
+  "name": "rest-reminder-pet",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "gen-sprites": "python scripts/build-ragdoll-sprites.py",
+    "demo": "scripts\\preview-demo.cmd"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-autostart": "^2.7.0",
+    "@tauri-apps/plugin-dialog": "^2.8.1",
+    "@tauri-apps/plugin-opener": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^26.6.4",
+    "typescript": "~5.8.3",
+    "vite": "^6.0.3"
+  }
+}

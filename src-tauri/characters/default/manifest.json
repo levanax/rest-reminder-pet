@@ -1,0 +1,55 @@
+{
+  "name": "default",
+  "variant": "ragdoll-photo",
+  "frameSize": {
+    "w": 128,
+    "h": 128
+  },
+  "actions": {
+    "crawl": {
+      "fps": 8,
+      "frames": [
+        "crawl_01.png",
+        "crawl_02.png",
+        "crawl_03.png"
+      ]
+    },
+    "lookDown": {
+      "fps": 4,
+      "frames": [
+        "look_01.png",
+        "look_02.png"
+      ]
+    },
+    "sneakPeek": {
+      "fps": 4,
+      "frames": [
+        "sneak_01.png",
+        "sneak_02.png"
+      ]
+    },
+    "jumpUp": {
+      "fps": 10,
+      "frames": [
+        "jump_01.png",
+        "jump_02.png",
+        "jump_03.png"
+      ]
+    },
+    "happyClimb": {
+      "fps": 8,
+      "frames": [
+        "climb_01.png",
+        "climb_02.png"
+      ]
+    },
+    "fall": {
+      "fps": 10,
+      "frames": [
+        "fall_01.png",
+        "fall_02.png",
+        "fall_03.png"
+      ]
+    }
+  }
+}
