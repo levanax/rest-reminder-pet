@@ -16,11 +16,11 @@ VARIANT = "cat-photo"
 
 # Relative crop boxes (left, top, right, bottom) on source image — face-focused
 CROPS = {
-    "face": (0.30, 0.02, 0.84, 0.44),
-    "peek": (0.32, 0.00, 0.82, 0.30),
-    "gaze": (0.30, 0.04, 0.84, 0.46),
-    "torso": (0.26, 0.02, 0.86, 0.52),
-    "tumble": (0.24, 0.00, 0.88, 0.48),
+    "face": (0.12, 0.02, 0.88, 0.72),
+    "peek": (0.18, 0.00, 0.82, 0.42),
+    "gaze": (0.14, 0.06, 0.86, 0.76),
+    "torso": (0.10, 0.02, 0.90, 0.82),
+    "tumble": (0.08, 0.00, 0.92, 0.78),
 }
 
 
@@ -131,9 +131,9 @@ def write_preview_gifs(frames: dict[str, list[str]], actions: dict) -> None:
 
 def write_app_icon(raw: Image.Image) -> None:
     """Square face cutout → icons/icon.png (then prefer `npm run gen-icons`)."""
-    # Tighter, face-centered crop for tray / installer clarity
+    # Face-centered crop for tray / installer clarity
     w, h = raw.size
-    l, t, r, b = 0.36, 0.00, 0.90, 0.40
+    l, t, r, b = 0.16, 0.00, 0.84, 0.62
     face = raw.crop((int(w * l), int(h * t), int(w * r), int(h * b)))
     face = ImageEnhance.Contrast(face).enhance(1.08)
     face = soft_ellipse_cutout(face)
