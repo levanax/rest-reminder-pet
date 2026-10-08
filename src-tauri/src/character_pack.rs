@@ -73,10 +73,23 @@ fn default_pack_needs_refresh(dest: &Path) -> bool {
     let Ok(manifest) = serde_json::from_str::<CharacterManifest>(&text) else {
         return true;
     };
-    // 缺少关键动作，或不是当前布偶猫照片版时，刷新内置包
+    // 缺少关键动作、不是布偶猫照片版、或帧数落后于当前内置包时刷新
+    let frame_count = |key: &str| {
+        manifest
+            .actions
+            .get(key)
+            .map(|a| a.frames.len())
+            .unwrap_or(0)
+    };
     !manifest.actions.contains_key("sneakPeek")
         || !manifest.actions.contains_key("jumpUp")
         || !text.contains("ragdoll-photo")
+        || frame_count("jumpUp") < 6
+        || frame_count("crawl") < 6
+        || frame_count("lookDown") < 5
+        || frame_count("sneakPeek") < 4
+        || frame_count("happyClimb") < 5
+        || frame_count("fall") < 6
 }
 
 pub fn seed_default_pack(resource_dir: &Path) -> Result<(), String> {
