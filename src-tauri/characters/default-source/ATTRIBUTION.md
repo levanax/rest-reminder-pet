@@ -1,8 +1,8 @@
 # Default character source
 
-- Image: [Ragdoll Blue Colourpoint.jpg](https://commons.wikimedia.org/wiki/File:Ragdoll_Blue_Colourpoint.jpg)
-- Subject: "Mork"; Ragdoll - Blue Colorpoint
-- Author: CX23882-19 (English Wikipedia)
-- License: Public domain (released by the author)
+- Image: `cat-source.jpg` (user-provided photo for local Rest Reminder Pet)
+- Processed into 128×128 elliptical cutout animation frames (pseudo-motion from a still)
+- Preview GIFs: `previews/*.gif`
+- App icon: derived face cutout written to `src-tauri/icons/`
 
-Processed into 128×128 elliptical cutout animation frames for Rest Reminder Pet.
+If redistributing this project, replace with an image you have rights to use, or restore a public-domain source.

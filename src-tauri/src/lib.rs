@@ -10,11 +10,11 @@ use input_hook::start_input_hook;
 use overlay::{hide_pet, hide_snow, show_pet, show_settings, show_snow};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, State,
+    AppHandle, Emitter, Manager, State, WindowEvent,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use timer::{Phase, PhaseTransition, PetEvent, TimerState};
@@ -22,9 +22,6 @@ use timer::{Phase, PhaseTransition, PetEvent, TimerState};
 struct AppState {
     timer: Arc<Mutex<TimerState>>,
     was_paused_before_reminder: Mutex<bool>,
-    /// 飘雪结束时刻；小猫退场后雪仍可继续下到此时刻
-    snow_deadline: Mutex<Option<Instant>>,
-    snow_seconds: Mutex<u32>,
 }
 
 fn emit_pet(app: &AppHandle, event: &PetEvent) {
@@ -116,17 +113,14 @@ fn begin_reminder(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let ev = timer.to_event(Some("crawl"));
         emit_pet(app, &ev);
     }
-    // 先铺全屏雪景，再叠小猫（保证猫在上层）
-    let snow_secs = *state.snow_seconds.lock().map_err(|e| e.to_string())?;
-    *state.snow_deadline.lock().map_err(|e| e.to_string())? =
-        Some(Instant::now() + Duration::from_secs(snow_secs as u64));
+    // 先铺全屏雪景，再叠小猫（保证猫在上层）；雪一直下到休息成功或手动「知道了」
     show_snow(app)?;
     show_pet(app)?;
     Ok(())
 }
 
-/// 小猫退场。`force_stop_snow`：托盘「知道了」立刻停雪；自然退场则雪继续下到 snow_deadline。
-fn finish_exit(app: &AppHandle, state: &AppState, force_stop_snow: bool) -> Result<(), String> {
+/// 结束提醒：小猫退场并停雪（仅休息成功或托盘「知道了」）。
+fn finish_exit(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let was_paused = *state
         .was_paused_before_reminder
         .lock()
@@ -138,10 +132,7 @@ fn finish_exit(app: &AppHandle, state: &AppState, force_stop_snow: bool) -> Resu
         emit_pet(app, &ev);
     }
     hide_pet(app)?;
-    if force_stop_snow {
-        *state.snow_deadline.lock().map_err(|e| e.to_string())? = None;
-        hide_snow(app)?;
-    }
+    hide_snow(app)?;
     Ok(())
 }
 
@@ -151,7 +142,6 @@ fn get_config(state: State<AppState>) -> Result<AppConfig, String> {
     let mut cfg = load_config();
     cfg.work_minutes = timer.work_minutes;
     cfg.observation_seconds = timer.observation_seconds;
-    cfg.snow_seconds = *state.snow_seconds.lock().map_err(|e| e.to_string())?;
     cfg.character_pack = timer.character_pack.clone();
     Ok(cfg)
 }
@@ -165,7 +155,6 @@ fn save_app_config(
     let mut cfg = cfg;
     cfg.work_minutes = cfg.work_minutes.clamp(1, 180);
     cfg.observation_seconds = cfg.observation_seconds.clamp(10, 120);
-    cfg.snow_seconds = cfg.snow_seconds.clamp(30, 600);
     if cfg.wanxiang.endpoint.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
         cfg.wanxiang.endpoint = load_config().wanxiang.endpoint;
         if cfg.wanxiang.endpoint.is_none() {
@@ -181,7 +170,6 @@ fn save_app_config(
             cfg.character_pack.clone(),
         );
     }
-    *state.snow_seconds.lock().map_err(|e| e.to_string())? = cfg.snow_seconds;
     let _ = sync_autostart(&app, cfg.autostart);
     Ok(())
 }
@@ -215,7 +203,7 @@ fn resume_timer(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn dismiss_reminder(app: AppHandle, state: State<AppState>) -> Result<(), String> {
-    finish_exit(&app, &state, true)
+    finish_exit(&app, &state)
 }
 
 #[tauri::command]
@@ -245,10 +233,14 @@ fn notify_action_done(app: AppHandle, state: State<AppState>, action: String) ->
             let ev = timer.to_event(Some("lookDown"));
             emit_pet(&app, &ev);
         }
-        (Phase::HappyExit, _) | (Phase::FallExit, _) => {
+        (Phase::HappyExit, _) => {
             drop(timer);
-            // 小猫退场后雪继续下，直到 snow_deadline
-            finish_exit(&app, &state, false)?;
+            // 连续空闲达标 → 休息成功，停雪并重置工作计时
+            finish_exit(&app, &state)?;
+        }
+        (Phase::FallExit, _) => {
+            // 保留兼容：不再因活动掉落结束提醒
+            drop(timer);
         }
         _ => {}
     }
@@ -313,7 +305,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     let _ = begin_reminder(app, state.inner());
                 }
                 "dismiss" => {
-                    let _ = finish_exit(app, state.inner(), true);
+                    let _ = finish_exit(app, state.inner());
                 }
                 "quit" => {
                     app.exit(0);
@@ -339,24 +331,6 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 fn start_tick_loop(app: AppHandle, state_timer: Arc<Mutex<TimerState>>) {
     thread::spawn(move || loop {
         thread::sleep(Duration::from_millis(250));
-
-        // 独立飘雪倒计时：到期停雪（小猫可能早已退场）
-        if let Some(state) = app.try_state::<AppState>() {
-            let due = {
-                let guard = state.snow_deadline.lock();
-                match guard {
-                    Ok(deadline) => deadline.map(|t| Instant::now() >= t).unwrap_or(false),
-                    Err(_) => false,
-                }
-            };
-            if due {
-                if let Ok(mut deadline) = state.snow_deadline.lock() {
-                    *deadline = None;
-                }
-                let _ = hide_snow(&app);
-            }
-        }
-
         let transition = {
             let Ok(mut timer) = state_timer.lock() else {
                 continue;
@@ -380,15 +354,6 @@ fn start_tick_loop(app: AppHandle, state_timer: Arc<Mutex<TimerState>>) {
                         continue;
                     };
                     timer.to_event(Some("happyClimb"))
-                };
-                emit_pet(&app, &ev);
-            }
-            Some(PhaseTransition::EnterFallExit) => {
-                let ev = {
-                    let Ok(timer) = state_timer.lock() else {
-                        continue;
-                    };
-                    timer.to_event(Some("fall"))
                 };
                 emit_pet(&app, &ev);
             }
@@ -416,8 +381,6 @@ pub fn run() {
         .manage(AppState {
             timer: Arc::clone(&timer),
             was_paused_before_reminder: Mutex::new(false),
-            snow_deadline: Mutex::new(None),
-            snow_seconds: Mutex::new(cfg.snow_seconds.clamp(30, 600)),
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -446,6 +409,16 @@ pub fn run() {
             }
             if let Some(snow) = app.get_webview_window("snow") {
                 let _ = snow.set_ignore_cursor_events(true);
+            }
+            // 点关闭只隐藏，避免窗口被销毁后无法再打开设置
+            if let Some(settings) = app.get_webview_window("settings") {
+                let settings_hide = settings.clone();
+                settings.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = settings_hide.hide();
+                    }
+                });
             }
 
             let cfg = load_config();

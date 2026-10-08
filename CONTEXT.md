@@ -37,5 +37,5 @@ _Avoid_: 偷窥、彩蛋
 _Avoid_: 开场、Splash
 
 **SnowScene**:
-Reminder 期间覆盖全部显示器的飘雪景致；点击穿透；持续时长独立于桌宠退场（可由配置指定秒数）。
+Reminder 期间覆盖全部显示器的飘雪景致；点击穿透；须连续无键鼠达到 ObservationWindow 才停雪，否则一直持续。
 _Avoid_: 天气特效、粒子

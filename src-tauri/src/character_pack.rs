@@ -73,7 +73,7 @@ fn default_pack_needs_refresh(dest: &Path) -> bool {
     let Ok(manifest) = serde_json::from_str::<CharacterManifest>(&text) else {
         return true;
     };
-    // 缺少关键动作、不是布偶猫照片版、或帧数落后于当前内置包时刷新
+    // 缺少关键动作、不是当前照片版、或帧数落后于当前内置包时刷新
     let frame_count = |key: &str| {
         manifest
             .actions
@@ -83,7 +83,7 @@ fn default_pack_needs_refresh(dest: &Path) -> bool {
     };
     !manifest.actions.contains_key("sneakPeek")
         || !manifest.actions.contains_key("jumpUp")
-        || !text.contains("ragdoll-photo")
+        || !text.contains("cat-photo")
         || frame_count("jumpUp") < 6
         || frame_count("crawl") < 6
         || frame_count("lookDown") < 5

@@ -1,4 +1,4 @@
-"""Build default CharacterPack frames from a public-domain Ragdoll photo."""
+"""Build default CharacterPack frames from the bundled cat photo."""
 from __future__ import annotations
 
 import json
@@ -7,17 +7,20 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src-tauri" / "characters" / "default-source" / "ragdoll-source.jpg"
+SRC = ROOT / "src-tauri" / "characters" / "default-source" / "cat-source.jpg"
 OUT = ROOT / "src-tauri" / "characters" / "default"
+PREVIEW = ROOT / "src-tauri" / "characters" / "default-source" / "previews"
+ICON_PNG = ROOT / "src-tauri" / "icons" / "icon.png"
 SIZE = 128
+VARIANT = "cat-photo"
 
-# Relative crop boxes (left, top, right, bottom) on source image
+# Relative crop boxes (left, top, right, bottom) on source image — face-focused
 CROPS = {
-    "face": (0.08, 0.18, 0.92, 0.72),
-    "peek": (0.12, 0.12, 0.88, 0.58),
-    "gaze": (0.10, 0.22, 0.90, 0.78),
-    "torso": (0.06, 0.16, 0.94, 0.80),
-    "tumble": (0.04, 0.14, 0.96, 0.76),
+    "face": (0.30, 0.02, 0.84, 0.44),
+    "peek": (0.32, 0.00, 0.82, 0.30),
+    "gaze": (0.30, 0.04, 0.84, 0.46),
+    "torso": (0.26, 0.02, 0.86, 0.52),
+    "tumble": (0.24, 0.00, 0.88, 0.48),
 }
 
 
@@ -98,6 +101,64 @@ def compose(
     if brightness != 1.0:
         im = bright(im, brightness)
     return im
+
+
+def write_preview_gifs(frames: dict[str, list[str]], actions: dict) -> None:
+    PREVIEW.mkdir(parents=True, exist_ok=True)
+    for action, files in frames.items():
+        if not files:
+            continue
+        fps = int(actions[action]["fps"])
+        duration = max(40, int(1000 / fps))
+        imgs: list[Image.Image] = []
+        for name in files:
+            im = Image.open(OUT / name).convert("RGBA")
+            # solid bg so GIF transparency does not smear
+            bg = Image.new("RGBA", im.size, (250, 246, 240, 255))
+            bg.alpha_composite(im)
+            imgs.append(bg.convert("P", palette=Image.Palette.ADAPTIVE, colors=256))
+        out = PREVIEW / f"{action}.gif"
+        imgs[0].save(
+            out,
+            save_all=True,
+            append_images=imgs[1:],
+            duration=duration,
+            loop=0,
+            disposal=2,
+        )
+        print(f"  preview gif: {out.name}")
+
+
+def write_app_icon(raw: Image.Image) -> None:
+    """Square face cutout → icons/icon.png (then prefer `npm run gen-icons`)."""
+    # Tighter, face-centered crop for tray / installer clarity
+    w, h = raw.size
+    l, t, r, b = 0.36, 0.00, 0.90, 0.40
+    face = raw.crop((int(w * l), int(h * t), int(w * r), int(h * b)))
+    face = ImageEnhance.Contrast(face).enhance(1.08)
+    face = soft_ellipse_cutout(face)
+    canvas = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
+    sized = face.resize((960, 960), Image.Resampling.LANCZOS)
+    canvas.paste(sized, ((1024 - 960) // 2, (1024 - 960) // 2), sized)
+    ICON_PNG.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(ICON_PNG, "PNG")
+    # Windows sizes used by tauri.conf.json
+    for path, px in [
+        (ICON_PNG.parent / "32x32.png", 32),
+        (ICON_PNG.parent / "64x64.png", 64),
+        (ICON_PNG.parent / "128x128.png", 128),
+        (ICON_PNG.parent / "128x128@2x.png", 256),
+    ]:
+        canvas.resize((px, px), Image.Resampling.LANCZOS).save(path, "PNG")
+    ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+    ico_imgs = [canvas.resize(s, Image.Resampling.LANCZOS) for s in ico_sizes]
+    ico_imgs[0].save(
+        ICON_PNG.parent / "icon.ico",
+        format="ICO",
+        sizes=ico_sizes,
+        append_images=ico_imgs[1:],
+    )
+    print(f"  app icon: {ICON_PNG.relative_to(ROOT)}")
 
 
 def main() -> None:
@@ -222,34 +283,39 @@ def main() -> None:
             "fall",
         )
 
+    actions = {
+        "crawl": {"fps": 10, "frames": frames["crawl"]},
+        "lookDown": {"fps": 6, "frames": frames["lookDown"]},
+        "sneakPeek": {"fps": 6, "frames": frames["sneakPeek"]},
+        "jumpUp": {"fps": 12, "frames": frames["jumpUp"]},
+        "happyClimb": {"fps": 10, "frames": frames["happyClimb"]},
+        "fall": {"fps": 12, "frames": frames["fall"]},
+    }
     manifest = {
         "name": "default",
-        "variant": "ragdoll-photo",
+        "variant": VARIANT,
         "frameSize": {"w": SIZE, "h": SIZE},
-        "actions": {
-            "crawl": {"fps": 10, "frames": frames["crawl"]},
-            "lookDown": {"fps": 6, "frames": frames["lookDown"]},
-            "sneakPeek": {"fps": 6, "frames": frames["sneakPeek"]},
-            "jumpUp": {"fps": 12, "frames": frames["jumpUp"]},
-            "happyClimb": {"fps": 10, "frames": frames["happyClimb"]},
-            "fall": {"fps": 12, "frames": frames["fall"]},
-        },
+        "actions": actions,
     }
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     (ROOT / "src-tauri" / "characters" / "default-source" / "ATTRIBUTION.md").write_text(
         """# Default character source
 
-- Image: [Ragdoll Blue Colourpoint.jpg](https://commons.wikimedia.org/wiki/File:Ragdoll_Blue_Colourpoint.jpg)
-- Subject: \"Mork\"; Ragdoll - Blue Colorpoint
-- Author: CX23882-19 (English Wikipedia)
-- License: Public domain (released by the author)
+- Image: `cat-source.jpg` (user-provided photo for local Rest Reminder Pet)
+- Processed into 128×128 elliptical cutout animation frames (pseudo-motion from a still)
+- Preview GIFs: `previews/*.gif`
+- App icon: derived face cutout written to `src-tauri/icons/`
 
-Processed into 128×128 elliptical cutout animation frames for Rest Reminder Pet.
+If redistributing this project, replace with an image you have rights to use, or restore a public-domain source.
 """,
         encoding="utf-8",
     )
-    print(f"Wrote ragdoll CharacterPack to {OUT}")
+
+    write_preview_gifs(frames, actions)
+    write_app_icon(raw)
+
+    print(f"Wrote cat CharacterPack to {OUT}")
     for action, files in frames.items():
         print(f"  {action}: {len(files)} frames")
 

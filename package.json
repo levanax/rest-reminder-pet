@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "gen-sprites": "python scripts/build-ragdoll-sprites.py",
+    "gen-icons": "tauri icon src-tauri/icons/icon.png",
     "demo": "scripts\\preview-demo.cmd"
   },
   "dependencies": {

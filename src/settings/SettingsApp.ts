@@ -4,7 +4,6 @@ import { open } from "@tauri-apps/plugin-dialog";
 type AppConfig = {
   workMinutes: number;
   observationSeconds: number;
-  snowSeconds: number;
   characterPack: string;
   autostart: boolean;
   wanxiang: { apiKey?: string | null; endpoint?: string | null };
@@ -22,14 +21,9 @@ root.innerHTML = `
     </div>
 
     <div class="field">
-      <label for="observationSeconds">观察期（秒）</label>
+      <label for="observationSeconds">连续无键鼠才算休息成功（秒）</label>
       <input id="observationSeconds" type="number" min="10" max="120" />
-    </div>
-
-    <div class="field">
-      <label for="snowSeconds">飘雪时长（秒）</label>
-      <input id="snowSeconds" type="number" min="30" max="600" />
-      <span class="sub" style="margin:0">与小猫退场无关，默认 120 秒</span>
+      <span class="sub" style="margin:0">有操作会重新计时；未达标前雪一直下</span>
     </div>
 
     <div class="field">
@@ -62,7 +56,6 @@ root.innerHTML = `
 
 const workMinutes = document.getElementById("workMinutes") as HTMLInputElement;
 const observationSeconds = document.getElementById("observationSeconds") as HTMLInputElement;
-const snowSeconds = document.getElementById("snowSeconds") as HTMLInputElement;
 const characterPack = document.getElementById("characterPack") as HTMLSelectElement;
 const autostart = document.getElementById("autostart") as HTMLInputElement;
 const apiKey = document.getElementById("apiKey") as HTMLInputElement;
@@ -91,7 +84,6 @@ async function load() {
   const cfg = await invoke<AppConfig>("get_config");
   workMinutes.value = String(cfg.workMinutes);
   observationSeconds.value = String(cfg.observationSeconds);
-  snowSeconds.value = String(cfg.snowSeconds ?? 120);
   autostart.checked = !!cfg.autostart;
   apiKey.value = cfg.wanxiang?.apiKey || "";
   await refreshPacks(cfg.characterPack);
@@ -102,7 +94,6 @@ document.getElementById("save")!.addEventListener("click", async () => {
     const cfg: AppConfig = {
       workMinutes: Number(workMinutes.value),
       observationSeconds: Number(observationSeconds.value),
-      snowSeconds: Number(snowSeconds.value),
       characterPack: characterPack.value,
       autostart: autostart.checked,
       wanxiang: {

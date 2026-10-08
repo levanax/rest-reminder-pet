@@ -1,6 +1,6 @@
 # Rest Reminder Pet
 
-Win11 桌面休息提醒桌宠：启动时小猫从桌面底部跳上屏顶；到点后从顶部爬下往下看，并在**所有屏幕**飘起雪花；观察期内无键鼠则爬回，有操作则掉落。未到休息点时，也会偶尔从屏顶偷偷探头往下看一眼再缩回。
+Win11 桌面休息提醒桌宠：启动时小猫从桌面底部跳上屏顶；到点后从顶部爬下往下看，并在**所有屏幕**飘雪。须**连续无键鼠**达到观察秒数才算休息成功并停雪；有操作会重新计时，雪不停。未到休息点时，也会偶尔从屏顶偷偷探头往下看一眼再缩回。
 
 ## 环境要求
 
@@ -32,7 +32,7 @@ npm run demo
 scripts\preview-demo.cmd
 ```
 
-预览时：静止约 30 秒会爬回；乱动鼠标/键盘会掉落。托盘点「知道了」可立刻结束。`Ctrl+C` 退出进程。
+预览时：须连续静止约 30 秒才爬回并停雪；乱动会重新计时、雪不停。托盘点「知道了」可立刻结束。`Ctrl+C` 退出进程。
 
 启动后看系统托盘图标：
 
@@ -67,12 +67,14 @@ cargo run --bin rest-reminder-gen -- --name my-cat --prompt "blue-gray cartoon c
 
 ## 默认形象来源
 
-内置 `default` 使用 Wikimedia 公有领域布偶猫照片加工而成：
+内置 `default` 由用户提供的猫咪照片裁剪加工而成（椭圆抠图 + 假动效帧）：
 
-- [Ragdoll Blue Colourpoint.jpg](https://commons.wikimedia.org/wiki/File:Ragdoll_Blue_Colourpoint.jpg)（作者 CX23882-19，Public Domain）
+- 源图：`src-tauri/characters/default-source/cat-source.jpg`
+- 预览 GIF：`src-tauri/characters/default-source/previews/*.gif`
 - 说明见 `src-tauri/characters/default-source/ATTRIBUTION.md`
 
 ## 脚本
 
-- `npm run gen-sprites`：用源照片重新生成内置 `default` 形象帧（需 Python + Pillow）
+- `npm run gen-sprites`：用源照片重新生成内置 `default` 形象帧、预览 GIF 与应用图标（需 Python + Pillow）
+- `npm run gen-icons`：用 `src-tauri/icons/icon.png` 生成全套平台图标（可选，Tauri CLI）
 - `npm run tauri build`：打 Windows 安装包

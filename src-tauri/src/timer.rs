@@ -153,18 +153,16 @@ impl TimerState {
         self.last_activity = None;
     }
 
+    /// 观察期内有键鼠：重置「连续空闲」计时，必须重新凑满 observation_seconds。
     pub fn note_activity(&mut self) {
         if self.phase == Phase::Observing {
+            self.observation_started = Some(Instant::now());
             self.last_activity = Some(Instant::now());
         }
     }
 
     pub fn start_happy_exit(&mut self) {
         self.phase = Phase::HappyExit;
-    }
-
-    pub fn start_fall_exit(&mut self) {
-        self.phase = Phase::FallExit;
     }
 
     pub fn work_deadline(&self) -> Duration {
@@ -205,10 +203,7 @@ impl TimerState {
                 }
             }
             Phase::Observing => {
-                if self.last_activity.is_some() {
-                    self.start_fall_exit();
-                    return Some(PhaseTransition::EnterFallExit);
-                }
+                // 只有连续 observation_seconds 无键鼠才算休息成功；有活动只重置计时，不结束飘雪
                 if let Some(started) = self.observation_started {
                     if started.elapsed() >= Duration::from_secs(self.observation_seconds as u64) {
                         self.start_happy_exit();
@@ -235,5 +230,4 @@ pub enum PhaseTransition {
     EnterReminding,
     EnterSneakPeek,
     EnterHappyExit,
-    EnterFallExit,
 }
