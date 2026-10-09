@@ -11,48 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "label": "pet",
-        "title": "Rest Reminder Pet",
-        "url": "index.html",
-        "width": 1920,
-        "height": 1080,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "visible": false,
-        "shadow": false,
-        "focus": false
-      },
-      {
-        "label": "snow",
-        "title": "Rest Reminder Pet — Snow",
-        "url": "snow.html",
-        "width": 1920,
-        "height": 1080,
-        "resizable": false,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "visible": false,
-        "shadow": false,
-        "focus": false
-      },
-      {
-        "label": "settings",
-        "title": "Rest Reminder Pet — Settings",
-        "url": "settings.html",
-        "width": 440,
-        "height": 560,
-        "resizable": false,
-        "visible": false,
-        "center": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

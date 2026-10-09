@@ -277,6 +277,8 @@ window.addEventListener("resize", () => {
 });
 
 async function main() {
+  // 雪景窗口仅在需要时创建；页面加载即开始飘雪，窗口销毁即释放内存
+  startSnow();
   await listen<{ active: boolean }>("snow-event", (e) => {
     if (e.payload?.active) startSnow();
     else stopSnow();

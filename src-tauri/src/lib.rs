@@ -14,7 +14,7 @@ use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager, State, WindowEvent,
+    AppHandle, Emitter, Manager, State,
 };
 use tauri_plugin_autostart::MacosLauncher;
 use timer::{Phase, PhaseTransition, PetEvent, TimerState};
@@ -38,7 +38,7 @@ fn do_pause(app: &AppHandle, state: &AppState) -> Result<(), String> {
         timer.pause();
     }
     if was_sneak {
-        hide_pet(app)?;
+        hide_pet(app);
         let timer = state.timer.lock().map_err(|e| e.to_string())?;
         emit_pet(app, &timer.to_event(None));
     }
@@ -52,10 +52,13 @@ fn begin_boot_intro(app: &AppHandle, state: &AppState) -> Result<(), String> {
             return Ok(());
         }
         timer.start_boot_intro();
-        let ev = timer.to_event(Some("jumpUp"));
-        emit_pet(app, &ev);
     }
+    // 先建窗口再发事件，避免前端未就绪
     show_pet(app)?;
+    {
+        let timer = state.timer.lock().map_err(|e| e.to_string())?;
+        emit_pet(app, &timer.to_event(Some("jumpUp")));
+    }
     Ok(())
 }
 
@@ -66,7 +69,8 @@ fn end_boot_intro(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let ev = timer.to_event(None);
         emit_pet(app, &ev);
     }
-    hide_pet(app)?;
+    // 销毁 WebView，空闲时不占内存
+    hide_pet(app);
     Ok(())
 }
 
@@ -77,10 +81,12 @@ fn begin_sneak_peek(app: &AppHandle, state: &AppState) -> Result<(), String> {
             return Ok(());
         }
         timer.start_sneak_peek();
-        let ev = timer.to_event(Some("sneakPeek"));
-        emit_pet(app, &ev);
     }
     show_pet(app)?;
+    {
+        let timer = state.timer.lock().map_err(|e| e.to_string())?;
+        emit_pet(app, &timer.to_event(Some("sneakPeek")));
+    }
     Ok(())
 }
 
@@ -91,7 +97,7 @@ fn end_sneak_peek(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let ev = timer.to_event(None);
         emit_pet(app, &ev);
     }
-    hide_pet(app)?;
+    hide_pet(app);
     Ok(())
 }
 
@@ -108,18 +114,19 @@ fn begin_reminder(app: &AppHandle, state: &AppState) -> Result<(), String> {
             .was_paused_before_reminder
             .lock()
             .map_err(|e| e.to_string())? = timer.phase == Phase::Paused;
-        // 打断开机入场 / 偷瞧，直接进入正式提醒
         timer.start_reminding();
-        let ev = timer.to_event(Some("crawl"));
-        emit_pet(app, &ev);
     }
-    // 先铺全屏雪景，再叠小猫（保证猫在上层）；雪一直下到休息成功或手动「知道了」
+    // 先建雪景与小猫窗口，再发动画事件；雪一直下到休息成功或「知道了」
     show_snow(app)?;
     show_pet(app)?;
+    {
+        let timer = state.timer.lock().map_err(|e| e.to_string())?;
+        emit_pet(app, &timer.to_event(Some("crawl")));
+    }
     Ok(())
 }
 
-/// 结束提醒：小猫退场并停雪（仅休息成功或托盘「知道了」）。
+/// 结束提醒：销毁小猫/雪景窗口并释放 WebView2 内存。
 fn finish_exit(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let was_paused = *state
         .was_paused_before_reminder
@@ -131,8 +138,8 @@ fn finish_exit(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let ev = timer.to_event(None);
         emit_pet(app, &ev);
     }
-    hide_pet(app)?;
-    hide_snow(app)?;
+    hide_pet(app);
+    hide_snow(app);
     Ok(())
 }
 
@@ -404,22 +411,7 @@ pub fn run() {
 
             setup_tray(app.handle())?;
 
-            if let Some(pet) = app.get_webview_window("pet") {
-                let _ = pet.set_ignore_cursor_events(true);
-            }
-            if let Some(snow) = app.get_webview_window("snow") {
-                let _ = snow.set_ignore_cursor_events(true);
-            }
-            // 点关闭只隐藏，避免窗口被销毁后无法再打开设置
-            if let Some(settings) = app.get_webview_window("settings") {
-                let settings_hide = settings.clone();
-                settings.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = settings_hide.hide();
-                    }
-                });
-            }
+            // 启动时不创建 pet/snow/settings WebView，需要时再动态创建，关闭即销毁以省内存
 
             let cfg = load_config();
             let _ = sync_autostart(app.handle(), cfg.autostart);
