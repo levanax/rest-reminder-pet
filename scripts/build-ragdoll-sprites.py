@@ -7,10 +7,10 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "src-tauri" / "characters" / "default-source" / "cat-source.jpg"
-OUT = ROOT / "src-tauri" / "characters" / "default"
-PREVIEW = ROOT / "src-tauri" / "characters" / "default-source" / "previews"
-ICON_PNG = ROOT / "src-tauri" / "icons" / "icon.png"
+SRC = ROOT / "characters" / "default-source" / "cat-source.jpg"
+OUT = ROOT / "characters" / "default"
+PREVIEW = ROOT / "characters" / "default-source" / "previews"
+ICON_PNG = ROOT / "icons" / "icon.png"
 SIZE = 128
 VARIANT = "cat-photo"
 
@@ -299,13 +299,13 @@ def main() -> None:
     }
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
-    (ROOT / "src-tauri" / "characters" / "default-source" / "ATTRIBUTION.md").write_text(
+    (ROOT / "characters" / "default-source" / "ATTRIBUTION.md").write_text(
         """# Default character source
 
 - Image: `cat-source.jpg` (user-provided photo for local Rest Reminder Pet)
 - Processed into 128×128 elliptical cutout animation frames (pseudo-motion from a still)
 - Preview GIFs: `previews/*.gif`
-- App icon: derived face cutout written to `src-tauri/icons/`
+- App icon: derived face cutout written to `icons/`
 
 If redistributing this project, replace with an image you have rights to use, or restore a public-domain source.
 """,

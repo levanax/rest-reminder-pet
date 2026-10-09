@@ -1,0 +1,53 @@
+[package]
+name = "rest-reminder-pet"
+version = "0.1.0"
+description = "Rest Reminder Pet — desktop break reminder with a cute pet"
+authors = ["levana"]
+edition = "2021"
+default-run = "rest-reminder-pet"
+
+[lib]
+name = "rest_reminder_pet"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rest-reminder-pet"
+path = "src/main.rs"
+
+[[bin]]
+name = "rest-reminder-gen"
+path = "src/bin/rest_reminder_gen.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+rdev = "0.5"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+clap = { version = "4", features = ["derive"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+thiserror = "2"
+fs_extra = "1"
+macroquad = "0.4"
+egui = "0.31"
+eframe = { version = "0.31", default-features = true, features = ["default_fonts", "glow"] }
+tray-icon = "0.19"
+muda = "0.15"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+rfd = "0.15"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Registry",
+  "Win32_System_LibraryLoader",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

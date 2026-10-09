@@ -1,6 +1,6 @@
 # Rest Reminder Pet
 
-Win11 桌面休息提醒上下文：在工作一段时间后，用桌宠形象提醒用户休息，并根据是否停止键鼠操作给出不同退场。
+Win11 桌面休息提醒上下文：在工作一段时间后，用桌宠形象提醒用户休息；观察期内连续无键鼠达到时长后 HappyExit，或由用户托盘 dismiss 结束。
 
 ## Language
 
@@ -13,7 +13,7 @@ _Avoid_: Timer（泛指）、番茄钟
 _Avoid_: 通知、弹窗、Toast
 
 **ObservationWindow**:
-Reminder 展示完成后的观察时段；期间根据是否出现 Activity 决定 HappyExit 或 FallExit。
+Reminder 展示完成后的观察时段；期间须连续无 Activity 达到配置秒数才进入 HappyExit；有 Activity 只重置连续空闲计时，不停雪。也可由托盘「知道了」直接结束。
 _Avoid_: 冷却、宽限期
 
 **Activity**:
@@ -37,5 +37,9 @@ _Avoid_: 偷窥、彩蛋
 _Avoid_: 开场、Splash
 
 **SnowScene**:
-Reminder 期间覆盖全部显示器的飘雪景致；点击穿透；须连续无键鼠达到 ObservationWindow 才停雪，否则一直持续。
+Reminder 期间覆盖全部显示器的飘雪景致；点击穿透；须连续无键鼠达到 ObservationWindow 才停雪，否则一直持续（或托盘 dismiss）。
 _Avoid_: 天气特效、粒子
+
+**HappyExit**:
+观察期连续空闲达标后，桌宠爬回屏顶并停雪、重置 WorkSession。
+_Avoid_: 成功动画（过泛）

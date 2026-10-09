@@ -9,5 +9,5 @@ echo   3) Stay still ~30s continuously to succeed; any input resets idle timer
 echo   Tray dismiss to end; Ctrl+C to exit
 echo.
 set REST_REMINDER_DEMO=1
-call npm run tauri -- dev
+cargo run --release
 endlocal
