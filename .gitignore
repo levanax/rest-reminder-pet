@@ -12,6 +12,14 @@ dist
 dist-ssr
 *.local
 
+# 真实猫动画管线的工作目录与虚拟环境
+work/
+.venv-pipeline/
+
+# Python
+__pycache__/
+*.pyc
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

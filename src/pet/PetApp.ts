@@ -42,11 +42,15 @@ let loadedPackId: string | null = null;
 let moveRaf: number | null = null;
 let currentAction: string | null = null;
 let lastFrameFile: string | null = null;
+let frameSize = { w: 128, h: 128 };
 
 async function ensurePack(name: string) {
   if (pack && loadedPackId === name) return pack;
   pack = await invoke<Pack>("get_pack", { name });
   loadedPackId = name;
+  frameSize = pack.manifest.frameSize;
+  img.style.width = `${frameSize.w}px`;
+  img.style.height = `${frameSize.h}px`;
   return pack;
 }
 
@@ -59,7 +63,7 @@ function clearTimers() {
 
 function yFromPct(pct: number) {
   const h = window.innerHeight;
-  return Math.max(0, Math.min(h - 128, (h * pct) / 100));
+  return Math.max(0, Math.min(h - frameSize.h, (h * pct) / 100));
 }
 
 function applyPose(pose: Pose, frames: string[]) {

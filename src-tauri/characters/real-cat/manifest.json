@@ -1,0 +1,113 @@
+{
+  "name": "real-cat",
+  "frameSize": {
+    "w": 512,
+    "h": 512
+  },
+  "actions": {
+    "crawl": {
+      "fps": 10,
+      "frames": [
+        "crawl_01.png",
+        "crawl_02.png",
+        "crawl_03.png",
+        "crawl_04.png",
+        "crawl_05.png",
+        "crawl_06.png",
+        "crawl_07.png",
+        "crawl_08.png",
+        "crawl_09.png",
+        "crawl_10.png",
+        "crawl_11.png",
+        "crawl_12.png",
+        "crawl_13.png",
+        "crawl_14.png"
+      ]
+    },
+    "sneakPeek": {
+      "fps": 8,
+      "frames": [
+        "sneakPeek_01.png",
+        "sneakPeek_02.png",
+        "sneakPeek_03.png",
+        "sneakPeek_04.png",
+        "sneakPeek_05.png",
+        "sneakPeek_06.png",
+        "sneakPeek_07.png",
+        "sneakPeek_08.png",
+        "sneakPeek_09.png",
+        "sneakPeek_10.png",
+        "sneakPeek_11.png",
+        "sneakPeek_12.png"
+      ]
+    },
+    "jumpUp": {
+      "fps": 12,
+      "frames": [
+        "jumpUp_01.png",
+        "jumpUp_02.png",
+        "jumpUp_03.png",
+        "jumpUp_04.png",
+        "jumpUp_05.png",
+        "jumpUp_06.png",
+        "jumpUp_07.png",
+        "jumpUp_08.png",
+        "jumpUp_09.png",
+        "jumpUp_10.png",
+        "jumpUp_11.png",
+        "jumpUp_12.png"
+      ]
+    },
+    "happyClimb": {
+      "fps": 10,
+      "frames": [
+        "happyClimb_01.png",
+        "happyClimb_02.png",
+        "happyClimb_03.png",
+        "happyClimb_04.png",
+        "happyClimb_05.png",
+        "happyClimb_06.png",
+        "happyClimb_07.png",
+        "happyClimb_08.png",
+        "happyClimb_09.png",
+        "happyClimb_10.png",
+        "happyClimb_11.png",
+        "happyClimb_12.png"
+      ]
+    },
+    "fall": {
+      "fps": 12,
+      "frames": [
+        "fall_01.png",
+        "fall_02.png",
+        "fall_03.png",
+        "fall_04.png",
+        "fall_05.png",
+        "fall_06.png",
+        "fall_07.png",
+        "fall_08.png",
+        "fall_09.png",
+        "fall_10.png",
+        "fall_11.png",
+        "fall_12.png"
+      ]
+    },
+    "lookDown": {
+      "fps": 8,
+      "frames": [
+        "lookDown_01.png",
+        "lookDown_02.png",
+        "lookDown_03.png",
+        "lookDown_04.png",
+        "lookDown_05.png",
+        "lookDown_06.png",
+        "lookDown_07.png",
+        "lookDown_08.png",
+        "lookDown_09.png",
+        "lookDown_10.png",
+        "lookDown_11.png",
+        "lookDown_12.png"
+      ]
+    }
+  }
+}
