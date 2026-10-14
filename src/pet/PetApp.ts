@@ -27,12 +27,18 @@ type Pose = {
   frameT: number;
 };
 
+const DEFAULT_DISPLAY_MAX_PX = 96;
+
+type AppConfigDto = {
+  displayMaxPx?: number;
+};
+
 const root = document.getElementById("app")!;
 root.innerHTML = `
   <div id="stage" style="position:relative;width:100%;height:100%;background:transparent;">
     <img id="pet" alt="" draggable="false"
-      style="position:absolute;left:50%;top:-160px;width:128px;height:128px;transform:translateX(-50%);
-             image-rendering:auto;pointer-events:none;opacity:0;transform-origin:50% 40%;" />
+      style="position:absolute;left:50%;top:-160px;width:96px;height:96px;transform:translateX(-50%);
+             image-rendering:auto;pointer-events:none;opacity:0;transform-origin:50% 0%;" />
   </div>
 `;
 
@@ -43,14 +49,62 @@ let moveRaf: number | null = null;
 let currentAction: string | null = null;
 let lastFrameFile: string | null = null;
 let frameSize = { w: 128, h: 128 };
+let displayMaxPx = DEFAULT_DISPLAY_MAX_PX;
+let displayW = DEFAULT_DISPLAY_MAX_PX;
+let displayH = DEFAULT_DISPLAY_MAX_PX;
+
+function clampDisplayMaxPx(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_DISPLAY_MAX_PX;
+  return Math.min(192, Math.max(48, Math.round(n)));
+}
+
+function applyDisplaySize() {
+  const m = Math.max(frameSize.w, frameSize.h) || 1;
+  displayW = Math.round((frameSize.w * displayMaxPx) / m);
+  displayH = Math.round((frameSize.h * displayMaxPx) / m);
+  img.style.width = `${displayW}px`;
+  img.style.height = `${displayH}px`;
+}
+
+function setDisplayMaxPx(px: number) {
+  displayMaxPx = clampDisplayMaxPx(px);
+  applyDisplaySize();
+}
+
+async function loadDisplayConfig() {
+  try {
+    const cfg = await invoke<AppConfigDto>("get_config");
+    setDisplayMaxPx(cfg.displayMaxPx ?? DEFAULT_DISPLAY_MAX_PX);
+  } catch {
+    setDisplayMaxPx(DEFAULT_DISPLAY_MAX_PX);
+  }
+}
+
+function setOrigin(origin: string) {
+  img.style.transformOrigin = origin;
+}
+
+/** Fully above the screen (on the cliff top platform). */
+function yAboveCliff() {
+  return -displayH - 8;
+}
+
+/** Peeking over the cliff rim: cancel typical top pad (~112/512). */
+function yCliffPeek() {
+  return -Math.round(displayH * 0.22);
+}
+
+/** Standing on the bottom ledge / platform. */
+function yBottomLedge() {
+  return window.innerHeight - Math.round(displayH * 0.92);
+}
 
 async function ensurePack(name: string) {
   if (pack && loadedPackId === name) return pack;
   pack = await invoke<Pack>("get_pack", { name });
   loadedPackId = name;
   frameSize = pack.manifest.frameSize;
-  img.style.width = `${frameSize.w}px`;
-  img.style.height = `${frameSize.h}px`;
+  applyDisplaySize();
   return pack;
 }
 
@@ -59,11 +113,6 @@ function clearTimers() {
     window.cancelAnimationFrame(moveRaf);
     moveRaf = null;
   }
-}
-
-function yFromPct(pct: number) {
-  const h = window.innerHeight;
-  return Math.max(0, Math.min(h - frameSize.h, (h * pct) / 100));
 }
 
 function applyPose(pose: Pose, frames: string[]) {
@@ -109,7 +158,6 @@ function smoothstep(t: number) {
 
 /** Progress with brief pauses near given centers (claw pushes). */
 function pausedProgress(t: number, pauses: number[], pauseWidth = 0.06): number {
-  // Remap time so velocity drops near each pause center
   const samples = 64;
   let acc = 0;
   const weights: number[] = [];
@@ -132,7 +180,7 @@ function pausedProgress(t: number, pauses: number[], pauseWidth = 0.06): number 
     if (sum >= target) {
       const prev = sum - weights[i];
       const local = (target - prev) / weights[i];
-      return ((i - 1 + local) / samples);
+      return (i - 1 + local) / samples;
     }
   }
   return 1;
@@ -164,6 +212,19 @@ function actionFrames(action: string): string[] {
   return pack?.manifest.actions[action]?.frames ?? [];
 }
 
+function hopFrames(): string[] {
+  const jump = actionFrames("jumpUp");
+  if (jump.length) return jump;
+  return actionFrames("fall");
+}
+
+/** Prefer crawl frames for pacing walk; fall back to jump/fall. */
+function walkFrames(): string[] {
+  const crawl = actionFrames("crawl");
+  if (crawl.length) return crawl;
+  return hopFrames();
+}
+
 async function playAction(action: string) {
   if (!pack) return;
   if (action === "sneakPeek") {
@@ -180,6 +241,10 @@ async function playAction(action: string) {
   }
   if (action === "lookDown") {
     await playLookDownOnce();
+    return;
+  }
+  if (action === "anxiousHop") {
+    await playAnxiousHop();
     return;
   }
   if (action === "happyClimb") {
@@ -204,56 +269,114 @@ async function playJumpUp() {
     return;
   }
   currentAction = "jumpUp";
-  const from = window.innerHeight - 20;
-  const to = -170;
-  const crouchY = from + 8;
+  setOrigin("50% 85%");
+  const ledge = yBottomLedge();
+  const above = yAboveCliff();
+  // Cat-like double load: shallow sink → tiny rebound → deep crouch
+  const crouchShallow = ledge + displayH * 0.035;
+  const crouchDeep = ledge + displayH * 0.1;
+  // Push-off asymmetry (which way the hind legs shove)
+  const driftSign = Math.random() < 0.5 ? -1 : 1;
+  const driftAmp = displayW * (0.1 + Math.random() * 0.06);
+
+  /**
+   * Ballistic rise in screen space (y down): fast leave, then gravity-like slowdown.
+   * s(u)=1-(1-u)^k maps u∈[0,1] → progress toward cliff; k>2 = punchy launch.
+   */
+  const ballistic = (u: number, k = 2.35) => 1 - Math.pow(1 - u, k);
 
   runTimeline(
-    1300,
+    1900,
     def.frames,
     (t) => {
       let y: number;
+      let x = 0;
       let sx = 1;
       let sy = 1;
+      let rot = 0;
       let opacity = 1;
       let frameT = t;
 
-      if (t < 0.15) {
-        const u = t / 0.15;
-        y = lerp(from, crouchY, u);
-        sx = lerp(1, 1.1, u);
-        sy = lerp(1, 0.88, u);
-        frameT = u * 0.16;
-      } else if (t < 0.55) {
-        const u = (t - 0.15) / 0.4;
+      if (t < 0.22) {
+        // 1) Anticipation — double crouch load
+        const u = t / 0.22;
+        if (u < 0.35) {
+          const p = u / 0.35;
+          y = lerp(ledge, crouchShallow, easeOutQuad(p));
+          sx = lerp(1, 1.1, p);
+          sy = lerp(1, 0.88, p);
+          rot = lerp(0, 4, p);
+          frameT = p * 0.08;
+        } else if (u < 0.5) {
+          // tiny rebound (weight shift)
+          const p = (u - 0.35) / 0.15;
+          y = lerp(crouchShallow, ledge + displayH * 0.012, p);
+          sx = lerp(1.1, 1.04, p);
+          sy = lerp(0.88, 0.95, p);
+          rot = lerp(4, 2, p);
+          frameT = 0.08 + p * 0.04;
+        } else {
+          // deep coil
+          const p = (u - 0.5) / 0.5;
+          const e = easeInOutQuad(p);
+          y = lerp(ledge + displayH * 0.012, crouchDeep, e);
+          sx = lerp(1.04, 1.22, e);
+          sy = lerp(0.95, 0.72, e);
+          rot = lerp(2, 8, e);
+          frameT = 0.12 + e * 0.06;
+        }
+      } else if (t < 0.36) {
+        // 2) Explosive takeoff — stretch + nose up
+        const u = (t - 0.22) / 0.14;
         const e = easeOutCubic(u);
-        y = lerp(crouchY, lerp(from, to, 0.72), e);
-        sx = lerp(1.1, 0.92, u);
-        sy = lerp(0.88, 1.12, u);
-        frameT = 0.16 + u * 0.4;
-      } else if (t < 0.85) {
-        const u = (t - 0.55) / 0.3;
-        y = lerp(lerp(from, to, 0.72), to, easeOutCubic(u));
-        sx = lerp(0.92, 1.02, u);
-        sy = lerp(1.12, 0.97, u);
-        frameT = 0.56 + u * 0.28;
+        // clear ~28% of the climb in the burst
+        const burstEnd = lerp(crouchDeep, above, 0.28);
+        y = lerp(crouchDeep, burstEnd, e);
+        x = driftSign * driftAmp * 0.15 * e;
+        sx = lerp(1.22, 0.82, e);
+        sy = lerp(0.72, 1.28, e);
+        rot = lerp(8, -16, e);
+        frameT = 0.18 + e * 0.22;
+      } else if (t < 0.86) {
+        // 3) Airborne ballistic arc toward cliff
+        const u = (t - 0.36) / 0.5;
+        const burstEnd = lerp(crouchDeep, above, 0.28);
+        const s = ballistic(u, 2.4);
+        y = lerp(burstEnd, above, s);
+        // lateral drift peaks mid-flight then settles (asymmetric shove)
+        x = driftSign * driftAmp * Math.sin(u * Math.PI * 0.92);
+        // stretch relaxes; micro flutter from air resistance
+        const flutter = Math.sin(u * Math.PI * 5.5) * 0.025 * (1 - u);
+        sx = lerp(0.82, 1.02, easeOutQuad(u)) + flutter;
+        sy = lerp(1.28, 0.96, easeOutQuad(u)) - flutter;
+        // rotate with "velocity": steep early, flatten near rim
+        const velFeel = Math.pow(1 - u, 1.4);
+        rot = lerp(-16, -3, easeOutQuad(u)) - velFeel * 4;
+        frameT = 0.4 + s * 0.42;
       } else {
-        const u = (t - 0.85) / 0.15;
-        y = to;
+        // 4) Scramble over cliff rim — fully off-screen, then brief fade
+        const u = (t - 0.86) / 0.14;
+        // slight overshoot deeper above, then settle
+        const overshoot = above - displayH * 0.08 * Math.sin(Math.min(1, u) * Math.PI);
+        y = overshoot;
+        x = driftSign * driftAmp * 0.12 * (1 - u);
         sx = lerp(1.02, 1, u);
-        sy = lerp(0.97, 1.04, Math.sin(u * Math.PI));
-        opacity = lerp(1, 0, u);
-        frameT = 0.84 + u * 0.16;
+        sy = lerp(0.96, 1.04, Math.sin(u * Math.PI));
+        rot = lerp(-3, 2, u);
+        frameT = 0.82 + u * 0.18;
+        if (t >= 0.96) {
+          opacity = lerp(1, 0, (t - 0.96) / 0.04);
+        }
       }
 
       return {
         y,
-        x: 0,
-        rot: t < 0.15 ? 0 : (t < 0.55 ? lerp(0, -4, (t - 0.15) / 0.4) : lerp(-4, 0, (t - 0.55) / 0.45)),
+        x,
+        rot,
         sx,
         sy,
         opacity,
-        frameT: Math.min(1, frameT),
+        frameT: Math.min(1, Math.max(0, frameT)),
       };
     },
     async () => {
@@ -272,8 +395,9 @@ async function playCrawl() {
     return;
   }
   currentAction = "crawl";
-  const from = -150;
-  const to = 8;
+  setOrigin("50% 0%");
+  const from = yAboveCliff();
+  const to = yCliffPeek();
 
   runTimeline(
     1400,
@@ -283,8 +407,8 @@ async function playCrawl() {
       const sway = Math.sin(p * Math.PI * 3);
       return {
         y: lerp(from, to, p),
-        x: sway * 10,
-        rot: sway * 8,
+        x: sway * 6,
+        rot: sway * 4,
         sx: 1,
         sy: 1 + Math.abs(Math.sin(p * Math.PI * 3)) * 0.03,
         opacity: 1,
@@ -306,21 +430,23 @@ async function playLookDownOnce() {
     return;
   }
   currentAction = "lookDown";
-  const y = yFromPct(6);
+  setOrigin("50% 0%");
+  const y = yCliffPeek();
 
   runTimeline(
     1000,
     frames,
     (t) => {
       const sway = Math.sin(t * Math.PI * 2) * (1 - t);
+      const breath = Math.sin(t * Math.PI * 3);
       return {
         y,
         x: sway * 3,
         rot: sway * 2,
         sx: 1,
-        sy: 1,
+        sy: lerp(0.96, 1, 0.5 + 0.5 * breath),
         opacity: 1,
-        frameT: Math.min(0.8, t), // avoid forced blink on one-shot
+        frameT: Math.min(0.8, t),
       };
     },
     async () => {
@@ -338,8 +464,10 @@ async function playHappyClimb() {
     return;
   }
   currentAction = "happyClimb";
-  const from = parseFloat(img.style.top) || yFromPct(6);
-  const to = -170;
+  setOrigin("50% 0%");
+  const parsed = parseFloat(img.style.top);
+  const from = Number.isFinite(parsed) ? parsed : yCliffPeek();
+  const to = yAboveCliff();
 
   runTimeline(
     1200,
@@ -347,14 +475,19 @@ async function playHappyClimb() {
     (t) => {
       const p = easeInOutQuad(pausedProgress(t, [0.35, 0.65], 0.07));
       const sway = Math.sin(p * Math.PI * 2.5);
-      const fade = t > 0.75 ? (t - 0.75) / 0.25 : 0;
+      const y = lerp(from, to, p);
+      // fade only after fully above cliff
+      let opacity = 1;
+      if (y <= to && t > 0.85) {
+        opacity = lerp(1, 0, (t - 0.85) / 0.15);
+      }
       return {
-        y: lerp(from, to, p),
-        x: sway * 9,
-        rot: sway * 9,
+        y,
+        x: sway * 6,
+        rot: sway * 5,
         sx: 1,
         sy: 1 + Math.abs(sway) * 0.04,
-        opacity: 1 - fade,
+        opacity,
         frameT: p,
       };
     },
@@ -374,8 +507,10 @@ async function playFall() {
     return;
   }
   currentAction = "fall";
-  const from = parseFloat(img.style.top) || yFromPct(6);
-  const to = window.innerHeight - 120;
+  setOrigin("50% 40%");
+  const parsed = parseFloat(img.style.top);
+  const from = Number.isFinite(parsed) ? parsed : yCliffPeek();
+  const to = yBottomLedge();
 
   runTimeline(
     1100,
@@ -404,22 +539,24 @@ async function playFall() {
 
 async function playSneakPeek() {
   if (!pack) return;
-  const def = pack.manifest.actions.sneakPeek ?? pack.manifest.actions.lookDown;
-  if (!def?.frames?.length) {
+  // Force lookDown frames (standing sneakPeek poses don't fit cliff peek)
+  const frames = actionFrames("lookDown");
+  if (!frames.length) {
     await invoke("notify_action_done", { action: "sneakPeek" });
     return;
   }
   currentAction = "sneakPeek";
-  const from = -110;
-  const peek = -28;
-  const hide = -130;
+  setOrigin("50% 0%");
+  const from = yAboveCliff();
+  const peek = yCliffPeek();
+  const hide = yAboveCliff();
   const total = 2800;
   const outEnd = 900 / total;
   const holdEnd = (900 + 1200) / total;
 
   runTimeline(
     total,
-    def.frames,
+    frames,
     (t) => {
       let y: number;
       let frameT: number;
@@ -445,7 +582,7 @@ async function playSneakPeek() {
         x: micro ? Math.sin(breathT * 0.7) * 3 : 0,
         rot: micro ? Math.sin(breathT * 0.55) * 2.5 : 0,
         sx: 1 - (micro ? breath * 0.012 : 0),
-        sy: 1 + (micro ? breath * 0.025 : 0),
+        sy: micro ? lerp(0.92, 1, 0.5 + 0.5 * breath) : 1,
         opacity: t >= 0.97 ? lerp(1, 0, (t - 0.97) / 0.03) : 1,
         frameT: Math.min(1, Math.max(0, frameT)),
       };
@@ -465,7 +602,8 @@ async function playLookLoop() {
   clearTimers();
   currentAction = "lookDown";
   lastFrameFile = null;
-  const y = yFromPct(6);
+  setOrigin("50% 0%");
+  const y = yCliffPeek();
   let nextBlinkAt = performance.now() + 2800 + Math.random() * 1400;
   let blinkUntil = 0;
 
@@ -480,7 +618,6 @@ async function playLookLoop() {
     const breath = Math.sin(now / 900);
     const scan = Math.sin(now / 1800);
     const blinking = now < blinkUntil;
-    // blink frame is last of 5 → frameT near 0.9+
     const frameT = blinking
       ? 0.92
       : 0.15 + (0.5 + 0.5 * Math.sin(now / 2200)) * 0.55;
@@ -488,12 +625,120 @@ async function playLookLoop() {
     applyPose(
       {
         y,
-        x: scan * 4,
-        rot: scan * 3,
+        x: scan * 3,
+        rot: scan * 2.5,
         sx: 1 - breath * 0.012,
-        sy: 1 + breath * 0.025,
+        sy: lerp(0.92, 1, 0.5 + 0.5 * breath),
         opacity: 1,
         frameT,
+      },
+      frames,
+    );
+    moveRaf = window.requestAnimationFrame(tick);
+  };
+  moveRaf = window.requestAnimationFrame(tick);
+}
+
+/** Drop from cliff peek to bottom ledge, then anxious walk loop. */
+async function playAnxiousHop() {
+  if (!pack) return;
+  const dropFrames = hopFrames();
+  const frames = walkFrames();
+  if (!frames.length && !dropFrames.length) {
+    await invoke("notify_action_done", { action: "anxiousHop" });
+    return;
+  }
+  currentAction = "anxiousHop";
+  setOrigin("50% 85%");
+  const parsed = parseFloat(img.style.top);
+  const fromY = Number.isFinite(parsed) ? parsed : yCliffPeek();
+  const toY = yBottomLedge();
+  const needDrop = fromY < toY - displayH * 0.2;
+  const landFrames = dropFrames.length ? dropFrames : frames;
+
+  const startLoopAndNotify = () => {
+    void playAnxiousWalkLoop(frames.length ? frames : landFrames);
+    void invoke("notify_action_done", { action: "anxiousHop" });
+  };
+
+  if (!needDrop) {
+    startLoopAndNotify();
+    return;
+  }
+
+  runTimeline(
+    650,
+    landFrames,
+    (t) => {
+      const g = easeInQuad(t);
+      return {
+        y: lerp(fromY, toY, g),
+        x: Math.sin(t * Math.PI * 2) * 8,
+        rot: lerp(0, 18, g) + Math.sin(t * Math.PI * 3) * 4,
+        sx: lerp(1, 0.95, g),
+        sy: lerp(1, 1.08, g),
+        opacity: 1,
+        frameT: 0.35 + g * 0.5,
+      };
+    },
+    () => {
+      if (currentAction !== "anxiousHop") return;
+      startLoopAndNotify();
+    },
+  );
+}
+
+/** Pace left/right on the bottom ledge (anxious walk, not hop). */
+function playAnxiousWalkLoop(frames: string[]) {
+  clearTimers();
+  lastFrameFile = null;
+  currentAction = "anxiousHop";
+  setOrigin("50% 85%");
+
+  const halfSpan = Math.min(220, window.innerWidth * 0.32);
+  let x = 0;
+  let dir = Math.random() < 0.5 ? -1 : 1;
+  let speed = 70 + Math.random() * 45;
+  let dist = 0;
+  let lastNow = performance.now();
+
+  const tick = (now: number) => {
+    if (currentAction !== "anxiousHop") return;
+
+    const dt = Math.min(0.05, (now - lastNow) / 1000);
+    lastNow = now;
+
+    x += dir * speed * dt;
+    dist += Math.abs(dir * speed * dt);
+    if (x > halfSpan) {
+      x = halfSpan;
+      dir = -1;
+      speed = 70 + Math.random() * 45;
+    } else if (x < -halfSpan) {
+      x = -halfSpan;
+      dir = 1;
+      speed = 70 + Math.random() * 45;
+    }
+
+    // occasional nervous pause / speed burst
+    if (Math.random() < 0.008) {
+      speed = 40 + Math.random() * 100;
+    }
+
+    const step = (dist / Math.max(28, displayW * 0.35)) % 1;
+    const bob = Math.abs(Math.sin(step * Math.PI * 2)) * displayH * 0.04;
+    const stretch = Math.sin(step * Math.PI * 2);
+    const ledge = yBottomLedge();
+
+    applyPose(
+      {
+        y: ledge - bob,
+        x,
+        rot: dir * (2 + stretch * 3),
+        sx: (dir < 0 ? -1 : 1) * (1 + Math.abs(stretch) * 0.04),
+        sy: 1 - Math.abs(stretch) * 0.05,
+        opacity: 1,
+        frameT: step,
       },
       frames,
     );
@@ -513,9 +758,9 @@ async function onPetEvent(ev: PetEvent) {
   if (ev.action === currentAction && ev.phase === "observing") {
     return;
   }
-  if (ev.phase === "observing" && ev.action === "lookDown") {
-    if (currentAction !== "lookDown") {
-      await playLookLoop();
+  if (ev.phase === "observing" && ev.action === "anxiousHop") {
+    if (currentAction !== "anxiousHop") {
+      await playAnxiousHop();
     }
     return;
   }
@@ -526,6 +771,10 @@ async function main() {
   await listen<PetEvent>("pet-event", (e) => {
     void onPetEvent(e.payload);
   });
+  await listen<AppConfigDto>("config-changed", (e) => {
+    setDisplayMaxPx(e.payload?.displayMaxPx ?? DEFAULT_DISPLAY_MAX_PX);
+  });
+  await loadDisplayConfig();
   try {
     const status = await invoke<PetEvent>("get_status");
     if (status.characterPack) {

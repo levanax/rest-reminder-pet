@@ -21,6 +21,13 @@ type Flake = {
 const canvas = document.getElementById("snow") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d", { alpha: true })!;
 
+/** Horizontal resolution of the bottom snow pile heightmap (px per column). */
+const PILE_STEP = 6;
+/** Max pile height as fraction of screen — high enough to bury the pet. */
+const PILE_MAX_FRAC = 0.42;
+/** Max pile height in px (hard cap). */
+const PILE_MAX_PX = 360;
+
 let flakes: Flake[] = [];
 let running = false;
 let raf = 0;
@@ -29,8 +36,105 @@ let h = 0;
 let wind = 0;
 let windTarget = 0;
 let lastT = 0;
+/** Settled snow height per column along the bottom edge. */
+let pile: Float32Array = new Float32Array(0);
 
 const spriteCache = new Map<string, HTMLCanvasElement>();
+
+function maxPileHeight() {
+  return Math.min(PILE_MAX_PX, h * PILE_MAX_FRAC);
+}
+
+function pileCols() {
+  return Math.max(1, Math.ceil(w / PILE_STEP) + 1);
+}
+
+function resetPile() {
+  pile = new Float32Array(pileCols());
+}
+
+function pileIndex(x: number) {
+  const i = Math.floor(x / PILE_STEP);
+  return Math.max(0, Math.min(pile.length - 1, i));
+}
+
+function pileHeightAt(x: number) {
+  if (!pile.length) return 0;
+  const f = x / PILE_STEP;
+  const i0 = Math.max(0, Math.min(pile.length - 1, Math.floor(f)));
+  const i1 = Math.max(0, Math.min(pile.length - 1, i0 + 1));
+  const t = f - i0;
+  return pile[i0] * (1 - t) + pile[i1] * t;
+}
+
+/** Add mass to the pile and lightly smooth neighbors so mounds look soft. */
+function depositSnow(x: number, amount: number) {
+  if (!pile.length) return;
+  const maxH = maxPileHeight();
+  const i = pileIndex(x);
+  pile[i] = Math.min(maxH, pile[i] + amount);
+  for (const d of [-1, 1]) {
+    const j = i + d;
+    if (j < 0 || j >= pile.length) continue;
+    pile[j] = Math.min(maxH, pile[j] + amount * 0.35);
+  }
+}
+
+/** Gentle avalanche: tall columns spill into shorter neighbors. */
+function settlePile(dt: number) {
+  if (pile.length < 2) return;
+  const maxH = maxPileHeight();
+  const rate = Math.min(1, dt * 2.2);
+  for (let i = 0; i < pile.length - 1; i++) {
+    const diff = pile[i] - pile[i + 1];
+    if (Math.abs(diff) < 1.2) continue;
+    const move = diff * 0.18 * rate;
+    pile[i] -= move;
+    pile[i + 1] += move;
+  }
+  for (let i = 0; i < pile.length; i++) {
+    pile[i] = Math.min(maxH, Math.max(0, pile[i]));
+  }
+}
+
+function drawPile() {
+  if (!pile.length) return;
+  const maxH = maxPileHeight();
+  if (maxH <= 0) return;
+
+  // soft blue-white mound along the bottom
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(0, h + 2);
+  for (let i = 0; i < pile.length; i++) {
+    const x = i * PILE_STEP;
+    const y = h - pile[i];
+    if (i === 0) ctx.lineTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.lineTo(w + 2, h - pile[pile.length - 1]);
+  ctx.lineTo(w + 2, h + 2);
+  ctx.closePath();
+
+  // denser fill so deep snow can fully bury the cat underneath
+  const grd = ctx.createLinearGradient(0, h - maxH, 0, h);
+  grd.addColorStop(0, "rgba(248,252,255,0.82)");
+  grd.addColorStop(0.4, "rgba(236,245,255,0.94)");
+  grd.addColorStop(1, "rgba(220,234,250,0.98)");
+  ctx.fillStyle = grd;
+  ctx.fill();
+
+  // sparkle rim along the crest
+  ctx.beginPath();
+  ctx.moveTo(0, h - pile[0]);
+  for (let i = 1; i < pile.length; i++) {
+    ctx.lineTo(i * PILE_STEP, h - pile[i]);
+  }
+  ctx.strokeStyle = "rgba(255,255,255,0.55)";
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.restore();
+}
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -39,6 +143,18 @@ function resize() {
   canvas.width = Math.floor(w * dpr);
   canvas.height = Math.floor(h * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const next = pileCols();
+  if (pile.length !== next) {
+    const old = pile;
+    pile = new Float32Array(next);
+    if (old.length) {
+      const scale = old.length / next;
+      for (let i = 0; i < next; i++) {
+        const j = Math.min(old.length - 1, Math.floor(i * scale));
+        pile[i] = old[j];
+      }
+    }
+  }
 }
 
 /** Soft circular powder flake (distant snow). */
@@ -215,6 +331,7 @@ function drawFlake(f: Flake) {
 
 function startSnow() {
   resize();
+  resetPile();
   flakes = [];
   densify();
   for (let i = 0; i < flakes.length; i++) flakes[i] = makeFlake(false);
@@ -247,16 +364,27 @@ function startSnow() {
         f.y += f.speed * (1 + Math.sin(t * 0.7 + f.phase) * 0.08);
         f.x += wind * (0.4 + f.size * 0.08) + Math.sin(t * 0.9 + f.phase) * f.drift;
 
-        if (f.y - f.size > h + 20) {
-          f.y = -20 - Math.random() * 60;
-          f.x = Math.random() * w;
-        }
         if (f.x < -40) f.x = w + 40;
         if (f.x > w + 40) f.x = -40;
+
+        // land on the growing pile instead of falling through the floor
+        const ground = h - pileHeightAt(f.x) - f.size * 0.35;
+        if (f.y >= ground) {
+          const mass =
+            (f.layer === "near" ? 2.4 : f.layer === "mid" ? 1.5 : 0.75) *
+            (0.7 + f.size * 0.12);
+          depositSnow(f.x, mass);
+          f.y = -20 - Math.random() * 60;
+          f.x = Math.random() * w;
+          continue;
+        }
 
         drawFlake(f);
       }
     }
+
+    settlePile(dt);
+    drawPile();
 
     raf = requestAnimationFrame(tick);
   };
@@ -267,6 +395,7 @@ function stopSnow() {
   running = false;
   cancelAnimationFrame(raf);
   flakes = [];
+  resetPile();
   ctx.clearRect(0, 0, w, h);
 }
 

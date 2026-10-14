@@ -113,9 +113,9 @@ fn begin_reminder(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let ev = timer.to_event(Some("crawl"));
         emit_pet(app, &ev);
     }
-    // 先铺全屏雪景，再叠小猫（保证猫在上层）；雪一直下到休息成功或手动「知道了」
-    show_snow(app)?;
+    // 先小猫、再全屏雪：积雪可盖住甚至淹没猫；雪一直下到休息成功或手动「知道了」
     show_pet(app)?;
+    show_snow(app)?;
     Ok(())
 }
 
@@ -155,8 +155,12 @@ fn save_app_config(
     let mut cfg = cfg;
     cfg.work_minutes = cfg.work_minutes.clamp(1, 180);
     cfg.observation_seconds = cfg.observation_seconds.clamp(10, 120);
+    cfg.display_max_px = cfg.display_max_px.clamp(48, 192);
+    let existing = load_config();
+    // Settings UI does not edit snow; keep whatever is already on disk
+    cfg.snow_seconds = existing.snow_seconds.clamp(30, 600);
     if cfg.wanxiang.endpoint.as_ref().map(|s| s.is_empty()).unwrap_or(true) {
-        cfg.wanxiang.endpoint = load_config().wanxiang.endpoint;
+        cfg.wanxiang.endpoint = existing.wanxiang.endpoint;
         if cfg.wanxiang.endpoint.is_none() {
             cfg.wanxiang.endpoint = config::WanxiangConfig::default().endpoint;
         }
@@ -171,6 +175,7 @@ fn save_app_config(
         );
     }
     let _ = sync_autostart(&app, cfg.autostart);
+    let _ = app.emit("config-changed", &cfg);
     Ok(())
 }
 
@@ -224,13 +229,13 @@ fn notify_action_done(app: AppHandle, state: State<AppState>, action: String) ->
             end_sneak_peek(&app, &state)?;
         }
         (Phase::Reminding, "crawl") => {
-            let ev = timer.to_event(Some("lookDown"));
+            let ev = timer.to_event(Some("anxiousHop"));
             drop(timer);
             emit_pet(&app, &ev);
         }
-        (Phase::Reminding, "lookDown") => {
+        (Phase::Reminding, "anxiousHop") => {
             timer.enter_observing();
-            let ev = timer.to_event(Some("lookDown"));
+            let ev = timer.to_event(Some("anxiousHop"));
             emit_pet(&app, &ev);
         }
         (Phase::HappyExit, _) => {
