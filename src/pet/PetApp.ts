@@ -595,50 +595,6 @@ async function playSneakPeek() {
   );
 }
 
-async function playLookLoop() {
-  if (!pack) return;
-  const frames = actionFrames("lookDown");
-  if (!frames.length) return;
-  clearTimers();
-  currentAction = "lookDown";
-  lastFrameFile = null;
-  setOrigin("50% 0%");
-  const y = yCliffPeek();
-  let nextBlinkAt = performance.now() + 2800 + Math.random() * 1400;
-  let blinkUntil = 0;
-
-  const tick = (now: number) => {
-    if (currentAction !== "lookDown") return;
-
-    if (now >= nextBlinkAt) {
-      blinkUntil = now + 120;
-      nextBlinkAt = now + 2800 + Math.random() * 1400;
-    }
-
-    const breath = Math.sin(now / 900);
-    const scan = Math.sin(now / 1800);
-    const blinking = now < blinkUntil;
-    const frameT = blinking
-      ? 0.92
-      : 0.15 + (0.5 + 0.5 * Math.sin(now / 2200)) * 0.55;
-
-    applyPose(
-      {
-        y,
-        x: scan * 3,
-        rot: scan * 2.5,
-        sx: 1 - breath * 0.012,
-        sy: lerp(0.92, 1, 0.5 + 0.5 * breath),
-        opacity: 1,
-        frameT,
-      },
-      frames,
-    );
-    moveRaf = window.requestAnimationFrame(tick);
-  };
-  moveRaf = window.requestAnimationFrame(tick);
-}
-
 /** Drop from cliff peek to bottom ledge, then anxious walk loop. */
 async function playAnxiousHop() {
   if (!pack) return;
