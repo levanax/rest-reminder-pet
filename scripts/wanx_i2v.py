@@ -24,7 +24,12 @@ from pathlib import Path
 
 DEFAULT_MODEL = "wan2.6-i2v"   # 图生视频（需要 --img）
 DEFAULT_T2V_MODEL = "wan2.6-t2v"  # 文生视频（无图，AI 自己生成）
+DEFAULT_T2I_MODEL = "wan2.6-t2i"  # 文生图（定格帧，无运动模糊）
 DEFAULT_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
+# wan2.6-t2i 走 image-generation（messages 协议），旧 text2image/image-synthesis 会报 url error
+DEFAULT_T2I_ENDPOINT = (
+    "https://dashscope.aliyuncs.com/api/v1/services/aigc/image-generation/generation"
+)
 TASK_URL = "https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # 万相 i2v 单图上限（base64 前）
@@ -131,6 +136,71 @@ def download(url: str, out: Path) -> None:
             if not chunk:
                 break
             f.write(chunk)
+
+
+def _extract_t2i_image_url(resp: dict) -> str | None:
+    out = resp.get("output") or {}
+    results = out.get("results") or []
+    if results and results[0].get("url"):
+        return results[0]["url"]
+    for choice in out.get("choices") or []:
+        content = (choice.get("message") or {}).get("content") or []
+        for part in content:
+            if isinstance(part, dict) and part.get("image"):
+                return part["image"]
+            if isinstance(part, dict) and part.get("type") == "image" and part.get("image"):
+                return part["image"]
+    return None
+
+
+def submit_t2i(api_key: str, endpoint: str, model: str, prompt: str,
+               size: str = "1280*1280",
+               negative_prompt: str | None = None) -> str:
+    """提交万相文生图任务，返回 task_id（或 sync:url）。"""
+    params: dict = {
+        "size": size,
+        "n": 1,
+        "prompt_extend": False,
+        "watermark": False,
+    }
+    if negative_prompt:
+        params["negative_prompt"] = negative_prompt
+    body = {
+        "model": model,
+        "input": {
+            "messages": [
+                {"role": "user", "content": [{"text": prompt}]},
+            ]
+        },
+        "parameters": params,
+    }
+    resp = http_json("POST", endpoint, api_key, body)
+    url = _extract_t2i_image_url(resp)
+    if url:
+        return "sync:" + url
+    task_id = resp.get("output", {}).get("task_id")
+    if not task_id:
+        raise SystemExit(f"文生图提交失败：{json.dumps(resp, ensure_ascii=False)}")
+    return task_id
+
+
+def poll_t2i(api_key: str, task_id: str, timeout_s: int = 300) -> str:
+    """等待文生图完成，返回图片 URL。"""
+    if task_id.startswith("sync:"):
+        return task_id[5:]
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        resp = http_json("GET", TASK_URL.format(task_id=task_id), api_key, None)
+        status = resp.get("output", {}).get("task_status", "")
+        if status == "SUCCEEDED":
+            url = _extract_t2i_image_url(resp)
+            if not url:
+                raise SystemExit(f"文生图成功但无 url：{json.dumps(resp, ensure_ascii=False)}")
+            return url
+        if status in ("FAILED", "CANCELED", "UNKNOWN"):
+            raise SystemExit(f"文生图失败（{status}）：{json.dumps(resp, ensure_ascii=False)}")
+        time.sleep(3)
+    raise SystemExit("文生图任务超时")
 
 
 def main() -> None:

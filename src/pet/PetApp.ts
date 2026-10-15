@@ -218,8 +218,10 @@ function hopFrames(): string[] {
   return actionFrames("fall");
 }
 
-/** Prefer crawl frames for pacing walk; fall back to jump/fall. */
+/** Prefer walk frames for pacing; fall back to crawl, then jump/fall. */
 function walkFrames(): string[] {
+  const walk = actionFrames("walk");
+  if (walk.length) return walk;
   const crawl = actionFrames("crawl");
   if (crawl.length) return crawl;
   return hopFrames();
@@ -652,10 +654,15 @@ function playAnxiousWalkLoop(frames: string[]) {
   setOrigin("50% 85%");
 
   const halfSpan = Math.min(220, window.innerWidth * 0.32);
+  const fps =
+    pack?.manifest.actions.walk?.fps ??
+    pack?.manifest.actions.crawl?.fps ??
+    8;
+  // Keep horizontal drift mild so legs (driven by fps) don't look like kicks.
+  const speed = 42;
   let x = 0;
   let dir = Math.random() < 0.5 ? -1 : 1;
-  let speed = 70 + Math.random() * 45;
-  let dist = 0;
+  let framePhase = 0;
   let lastNow = performance.now();
 
   const tick = (now: number) => {
@@ -665,36 +672,28 @@ function playAnxiousWalkLoop(frames: string[]) {
     lastNow = now;
 
     x += dir * speed * dt;
-    dist += Math.abs(dir * speed * dt);
     if (x > halfSpan) {
       x = halfSpan;
       dir = -1;
-      speed = 70 + Math.random() * 45;
     } else if (x < -halfSpan) {
       x = -halfSpan;
       dir = 1;
-      speed = 70 + Math.random() * 45;
     }
 
-    // occasional nervous pause / speed burst
-    if (Math.random() < 0.008) {
-      speed = 40 + Math.random() * 100;
-    }
-
-    const step = (dist / Math.max(28, displayW * 0.35)) % 1;
-    const bob = Math.abs(Math.sin(step * Math.PI * 2)) * displayH * 0.04;
-    const stretch = Math.sin(step * Math.PI * 2);
+    framePhase += dt * fps;
+    const n = Math.max(1, frames.length);
+    const frameT = (framePhase % n) / n;
     const ledge = yBottomLedge();
 
     applyPose(
       {
-        y: ledge - bob,
+        y: ledge,
         x,
-        rot: dir * (2 + stretch * 3),
-        sx: (dir < 0 ? -1 : 1) * (1 + Math.abs(stretch) * 0.04),
-        sy: 1 - Math.abs(stretch) * 0.05,
+        rot: 0,
+        sx: dir < 0 ? -1 : 1,
+        sy: 1,
         opacity: 1,
-        frameT: step,
+        frameT,
       },
       frames,
     );

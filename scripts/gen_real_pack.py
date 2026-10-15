@@ -16,7 +16,12 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
+
+import cv2
+import numpy as np
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import video_to_pack
@@ -94,11 +99,85 @@ ACTIONS: dict[str, dict] = {
         "frames": 12,
         "duration": 5,
     },
+    # walk：万相文生图定格（wan2.6-t2i）。用保守站立/微抬爪相位，避免视频鬼腿。
+    "walk": {
+        "mode": "t2i_stills",
+        "fps": 3,
+        "negative_prompt": (
+            "extra legs, five legs, six legs, ghost limbs, duplicated paws, "
+            "motion blur, motion trails, deformed legs, merged legs, "
+            "blurry paws, three front legs, running, jumping, flying"
+        ),
+        "phases": [
+            (
+                "strict orthographic side profile facing right, standing still, "
+                "near front paw raised one centimeter only, other three paws flat on ground, "
+                "exactly four legs, museum specimen photo, sharp focus, full body"
+            ),
+            (
+                "strict orthographic side profile facing right, standing still, "
+                "weight shifted slightly forward, all four paws on ground, "
+                "exactly four legs, museum specimen photo, sharp focus, full body"
+            ),
+        ],
+    },
 }
+
+
+def _pack_action_pngs(action: str, names: list[str], out: Path, size: int, fps: int) -> None:
+    for old in out.glob(f"{action}_*.png"):
+        if old.name not in names:
+            old.unlink(missing_ok=True)
+    manifest = video_to_pack.load_manifest(out)
+    manifest["frameSize"] = {"w": size, "h": size}
+    manifest["actions"][action] = {"fps": fps, "frames": names}
+    video_to_pack.save_manifest(out, manifest)
+    video_to_pack.write_preview(out, action, names, size)
+    print(f"  {action} 完成：{len(names)} 帧")
+
+
+def run_walk_stills(cfg: dict, api_key: str, work_dir: Path, out: Path, size: int) -> None:
+    """万相文生图定格步态帧（避免视频鬼腿）。"""
+    work_dir.mkdir(parents=True, exist_ok=True)
+    out.mkdir(parents=True, exist_ok=True)
+    phases: list[str] = list(cfg["phases"])
+    session = video_to_pack.new_session(video_to_pack.MODEL)
+    names: list[str] = []
+    print(f"\n=== 万相文生图生成 walk 定格帧（{len(phases)} 张，model={wanx_i2v.DEFAULT_T2I_MODEL}）===")
+    for i, phase in enumerate(phases, 1):
+        prompt = (
+            f"{CAT} {phase}. Full body visible, head and back not cropped, "
+            "tail gently curved, calm upright walk, photorealistic."
+        )
+        raw = work_dir / f"walk_still_{i:02d}.png"
+        print(f"  [{i}/{len(phases)}] 提交文生图...")
+        task_id = wanx_i2v.submit_t2i(
+            api_key,
+            wanx_i2v.DEFAULT_T2I_ENDPOINT,
+            wanx_i2v.DEFAULT_T2I_MODEL,
+            prompt,
+            negative_prompt=cfg.get("negative_prompt"),
+        )
+        url = wanx_i2v.poll_t2i(api_key, task_id)
+        wanx_i2v.download(url, raw)
+        name = f"walk_{i:02d}.png"
+        pil = Image.open(raw).convert("RGB")
+        bgr = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+        video_to_pack.square_canvas(video_to_pack.matte(bgr, session), size).save(out / name, "PNG")
+        names.append(name)
+        print(f"    -> {name}")
+        # 避开限流
+        if i < len(phases):
+            time.sleep(2)
+    _pack_action_pngs("walk", names, out, size, int(cfg["fps"]))
 
 
 def run_action(action: str, cfg: dict, img_uri: str | None, api_key: str, endpoint: str,
                model: str, resolution: str, work_dir: Path, out: Path, size: int) -> None:
+    if cfg.get("mode") == "t2i_stills":
+        run_walk_stills(cfg, api_key, work_dir, out, size)
+        return
+
     work_dir.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
     video = work_dir / f"{action}.mp4"
@@ -120,12 +199,7 @@ def run_action(action: str, cfg: dict, img_uri: str | None, api_key: str, endpoi
         name = f"{action}_{i:02d}.png"
         video_to_pack.square_canvas(video_to_pack.matte(frame, session), size).save(out / name, "PNG")
         names.append(name)
-    manifest = video_to_pack.load_manifest(out)
-    manifest["frameSize"] = {"w": size, "h": size}
-    manifest["actions"][action] = {"fps": cfg["fps"], "frames": names}
-    video_to_pack.save_manifest(out, manifest)
-    video_to_pack.write_preview(out, action, names, size)
-    print(f"  {action} 完成：{len(names)} 帧")
+    _pack_action_pngs(action, names, out, size, int(cfg["fps"]))
 
 
 def main() -> None:

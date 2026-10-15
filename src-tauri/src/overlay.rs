@@ -71,11 +71,17 @@ fn pet_window(app: &AppHandle) -> Result<WebviewWindow, String> {
         .ok_or_else(|| "找不到 pet 窗口".to_string())
 }
 
-/// Cover the full virtual desktop (all monitors) for the snowfall layer.
-pub fn position_snow_all_monitors(app: &AppHandle) -> Result<(), String> {
-    let snow = app
-        .get_webview_window("snow")
-        .ok_or_else(|| "找不到 snow 窗口".to_string())?;
+/// Physical layout of the snow overlay relative to the virtual desktop origin.
+struct SnowLayout {
+    min_x: i32,
+    min_y: i32,
+    width: u32,
+    height: u32,
+    /// Monitor rects in physical pixels, relative to (min_x, min_y).
+    monitors: Vec<serde_json::Value>,
+}
+
+fn snow_layout(app: &AppHandle) -> Result<SnowLayout, String> {
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
         return Err("无显示器".into());
@@ -96,23 +102,59 @@ pub fn position_snow_all_monitors(app: &AppHandle) -> Result<(), String> {
 
     let width = (max_x - min_x).max(1) as u32;
     let height = (max_y - min_y).max(1) as u32;
-    snow.set_position(PhysicalPosition::new(min_x, min_y))
+    let monitor_rects = monitors
+        .iter()
+        .map(|m| {
+            let pos = m.position();
+            let size = m.size();
+            serde_json::json!({
+                "x": pos.x - min_x,
+                "y": pos.y - min_y,
+                "width": size.width,
+                "height": size.height,
+            })
+        })
+        .collect();
+
+    Ok(SnowLayout {
+        min_x,
+        min_y,
+        width,
+        height,
+        monitors: monitor_rects,
+    })
+}
+
+/// Cover the full virtual desktop (all monitors) for the snowfall layer.
+fn position_snow_all_monitors(app: &AppHandle) -> Result<SnowLayout, String> {
+    let snow = app
+        .get_webview_window("snow")
+        .ok_or_else(|| "找不到 snow 窗口".to_string())?;
+    let layout = snow_layout(app)?;
+    snow.set_position(PhysicalPosition::new(layout.min_x, layout.min_y))
         .map_err(|e| e.to_string())?;
-    snow.set_size(PhysicalSize::new(width, height))
+    snow.set_size(PhysicalSize::new(layout.width, layout.height))
         .map_err(|e| e.to_string())?;
     snow.set_ignore_cursor_events(true)
         .map_err(|e| e.to_string())?;
     snow.set_always_on_top(true).map_err(|e| e.to_string())?;
-    Ok(())
+    Ok(layout)
 }
 
 pub fn show_snow(app: &AppHandle) -> Result<(), String> {
-    position_snow_all_monitors(app)?;
+    let layout = position_snow_all_monitors(app)?;
     let snow = app
         .get_webview_window("snow")
         .ok_or_else(|| "找不到 snow 窗口".to_string())?;
     snow.show().map_err(|e| e.to_string())?;
-    let _ = app.emit("snow-event", serde_json::json!({ "active": true }));
+    let _ = app.emit(
+        "snow-event",
+        serde_json::json!({
+            "active": true,
+            "window": { "width": layout.width, "height": layout.height },
+            "monitors": layout.monitors,
+        }),
+    );
     Ok(())
 }
 

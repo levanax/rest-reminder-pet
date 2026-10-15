@@ -108,6 +108,13 @@
         "lookDown_11.png",
         "lookDown_12.png"
       ]
+    },
+    "walk": {
+      "fps": 3,
+      "frames": [
+        "walk_02.png",
+        "walk_04.png"
+      ]
     }
   }
 }
