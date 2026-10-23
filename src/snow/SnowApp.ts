@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 type Layer = "far" | "mid" | "near";
@@ -52,6 +53,7 @@ type ScreenPile = {
 
 let flakes: Flake[] = [];
 let running = false;
+let paused = false;
 let raf = 0;
 let w = 0;
 let h = 0;
@@ -91,6 +93,50 @@ function fallbackScreens(): ScreenPile[] {
   return [makeScreen(0, 0, w, h)];
 }
 
+/**
+ * After physical→CSS mapping, force the virtual-desktop bbox onto this canvas.
+ * RDP / DPI races often leave innerWidth/Height out of sync with Rust's physical
+ * size, so pile bottoms float mid-screen or sit below the visible edge.
+ */
+function alignScreensToCanvas(preservePiles: Float32Array[]) {
+  if (!screens.length || w <= 0 || h <= 0) {
+    screens = fallbackScreens();
+    return;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const s of screens) {
+    minX = Math.min(minX, s.x);
+    minY = Math.min(minY, s.y);
+    maxX = Math.max(maxX, s.x + s.w);
+    maxY = Math.max(maxY, s.y + s.h);
+  }
+  const layoutW = maxX - minX;
+  const layoutH = maxY - minY;
+  if (!(layoutW > 1) || !(layoutH > 1)) {
+    screens = fallbackScreens();
+    return;
+  }
+
+  const needsX = Math.abs(minX) > 1.5 || Math.abs(maxX - w) > 1.5;
+  const needsY = Math.abs(minY) > 1.5 || Math.abs(maxY - h) > 1.5;
+  if (!needsX && !needsY) return;
+
+  const sx = w / layoutW;
+  const sy = h / layoutH;
+  screens = screens.map((s, idx) =>
+    makeScreen(
+      (s.x - minX) * sx,
+      (s.y - minY) * sy,
+      s.w * sx,
+      s.h * sy,
+      preservePiles[idx] ?? s.pile,
+    ),
+  );
+}
+
 /** Map physical monitor rects from Rust into CSS space of this window. */
 function applyMonitorLayout(
   physicalWindow: { width: number; height: number },
@@ -105,10 +151,15 @@ function applyMonitorLayout(
   const sx = w / physicalWindow.width;
   const sy = h / physicalWindow.height;
   const prev = preserve ? screens : [];
+  const prevPiles = prev.map((s) => s.pile);
   screens = physicalMonitors.map((m, idx) =>
     makeScreen(m.x * sx, m.y * sy, m.width * sx, m.height * sy, prev[idx]?.pile),
   );
-  if (!screens.length) screens = fallbackScreens();
+  if (!screens.length) {
+    screens = fallbackScreens();
+    return;
+  }
+  alignScreensToCanvas(preserve ? prevPiles : screens.map((s) => s.pile));
 }
 
 function resetPiles() {
@@ -421,6 +472,39 @@ function drawFlake(f: Flake) {
   ctx.restore();
 }
 
+/** Apply a layout update without wiping flakes / piles (RDP resync). */
+function syncLayoutFromPayload(payload: SnowEventPayload, preservePiles: boolean) {
+  resize();
+  if (payload.window && payload.monitors?.length) {
+    applyMonitorLayout(payload.window, payload.monitors, preservePiles);
+  } else if (lastLayout) {
+    applyMonitorLayout(lastLayout.window, lastLayout.monitors, preservePiles);
+  } else {
+    screens = fallbackScreens();
+  }
+  densify();
+}
+
+/** Re-read CSS size for a few frames — WebView often lags set_size under RDP. */
+function scheduleLayoutResync() {
+  const delays = [0, 50, 120, 280, 600];
+  for (const ms of delays) {
+    window.setTimeout(() => {
+      if (!running || !lastLayout) return;
+      const prevW = w;
+      const prevH = h;
+      resize();
+      if (w !== prevW || h !== prevH || screens.length === 0) {
+        applyMonitorLayout(lastLayout.window, lastLayout.monitors, true);
+        densify();
+      } else {
+        // Size stable but bottoms may still be wrong relative to canvas
+        alignScreensToCanvas(screens.map((s) => s.pile));
+      }
+    }, ms);
+  }
+}
+
 function startSnow(payload?: SnowEventPayload) {
   resize();
   if (payload?.window && payload.monitors?.length) {
@@ -434,12 +518,18 @@ function startSnow(payload?: SnowEventPayload) {
   wind = 0;
   windTarget = (Math.random() - 0.5) * 0.6;
   lastT = performance.now();
+  scheduleLayoutResync();
 
   if (running) return;
   running = true;
 
   const tick = (now: number) => {
     if (!running) return;
+    if (paused) {
+      lastT = now;
+      raf = requestAnimationFrame(tick);
+      return;
+    }
     const dt = Math.min(0.05, (now - lastT) / 1000);
     lastT = now;
     const t = now / 1000;
@@ -503,16 +593,39 @@ function stopSnow() {
   ctx.clearRect(0, 0, w, h);
 }
 
+let resizeRefreshTimer = 0;
 window.addEventListener("resize", () => {
   if (!running) return;
   resize();
   densify();
+  // Ask Rust to re-measure monitors after the OS settles (RDP resolution flip).
+  window.clearTimeout(resizeRefreshTimer);
+  resizeRefreshTimer = window.setTimeout(() => {
+    if (!running) return;
+    void invoke("refresh_snow_layout_cmd").catch(() => {
+      if (lastLayout) applyMonitorLayout(lastLayout.window, lastLayout.monitors, true);
+    });
+  }, 120);
 });
 
 async function main() {
+  await listen<{ held?: boolean }>("session-hold", (e) => {
+    paused = !!e.payload?.held;
+    if (paused) lastT = performance.now();
+  });
   await listen<SnowEventPayload>("snow-event", (e) => {
-    if (e.payload?.active) startSnow(e.payload);
-    else stopSnow();
+    const payload = e.payload;
+    if (!payload?.active) {
+      stopSnow();
+      return;
+    }
+    // Already snowing: layout-only refresh (delayed RDP resync must not reset piles).
+    if (running) {
+      syncLayoutFromPayload(payload, true);
+      scheduleLayoutResync();
+      return;
+    }
+    startSnow(payload);
   });
 }
 

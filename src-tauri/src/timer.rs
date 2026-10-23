@@ -22,6 +22,12 @@ pub struct PetEvent {
     pub character_pack: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldReason {
+    Lock,
+    Sleep,
+}
+
 pub struct TimerState {
     pub phase: Phase,
     pub work_minutes: u32,
@@ -30,8 +36,17 @@ pub struct TimerState {
     pub work_elapsed: Duration,
     pub segment_started: Option<Instant>,
     pub observation_started: Option<Instant>,
+    pub observation_banked: Duration,
     pub last_activity: Option<Instant>,
     pub next_sneak_at: Instant,
+    /// 当前 Reminder 尚未记账（成功或未完成）。
+    pub reminder_active: bool,
+    pub delay_accumulated: Duration,
+    pub delay_running_since: Option<Instant>,
+    /// SessionLock 解除后是否应继续累计 WorkSession（手动暂停优先）。
+    pub resume_work_on_unlock: bool,
+    pub hold_lock: bool,
+    pub hold_sleep: bool,
 }
 
 fn random_range_secs(min: u64, max: u64) -> u64 {
@@ -54,9 +69,130 @@ impl TimerState {
             // 入场动画结束再开始累计工作时间
             segment_started: None,
             observation_started: None,
+            observation_banked: Duration::ZERO,
             last_activity: None,
             next_sneak_at: Instant::now() + Duration::from_secs(3600),
+            reminder_active: false,
+            delay_accumulated: Duration::ZERO,
+            delay_running_since: None,
+            resume_work_on_unlock: false,
+            hold_lock: false,
+            hold_sleep: false,
         }
+    }
+
+    pub fn session_held(&self) -> bool {
+        self.hold_lock || self.hold_sleep
+    }
+
+    fn in_reminder(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Reminding | Phase::Observing | Phase::HappyExit | Phase::FallExit
+        )
+    }
+
+    fn clear_delay_clocks(&mut self) {
+        self.delay_accumulated = Duration::ZERO;
+        self.delay_running_since = None;
+    }
+
+    fn freeze_delay(&mut self) {
+        if let Some(start) = self.delay_running_since.take() {
+            self.delay_accumulated += start.elapsed();
+        }
+    }
+
+    fn freeze_observation(&mut self) {
+        if let Some(start) = self.observation_started.take() {
+            self.observation_banked += start.elapsed();
+        }
+    }
+
+    fn current_observation(&self) -> Duration {
+        let mut total = self.observation_banked;
+        if let Some(start) = self.observation_started {
+            total += start.elapsed();
+        }
+        total
+    }
+
+    pub fn current_rest_delay(&self) -> Duration {
+        let mut total = self.delay_accumulated;
+        if let Some(start) = self.delay_running_since {
+            total += start.elapsed();
+        }
+        total
+    }
+
+    /// 进入或离开 SessionLock。若保持状态发生变化，返回现在是否处于暂停。
+    pub fn set_hold(&mut self, reason: HoldReason, active: bool) -> Option<bool> {
+        let was = self.session_held();
+        match reason {
+            HoldReason::Lock => self.hold_lock = active,
+            HoldReason::Sleep => self.hold_sleep = active,
+        }
+        let now_held = self.session_held();
+        if !was && now_held {
+            self.freeze_for_hold();
+            return Some(true);
+        }
+        if was && !now_held {
+            self.thaw_after_hold();
+            return Some(false);
+        }
+        None
+    }
+
+    fn freeze_for_hold(&mut self) {
+        if matches!(self.phase, Phase::Working | Phase::SneakPeek) {
+            self.flush_work();
+            self.segment_started = None;
+            self.resume_work_on_unlock = true;
+        } else if self.phase == Phase::Paused {
+            self.resume_work_on_unlock = false;
+        }
+        self.freeze_delay();
+        self.freeze_observation();
+    }
+
+    fn thaw_after_hold(&mut self) {
+        let now = Instant::now();
+        if self.resume_work_on_unlock && matches!(self.phase, Phase::Working | Phase::SneakPeek) {
+            self.segment_started = Some(now);
+            self.resume_work_on_unlock = false;
+        }
+        if self.phase == Phase::Working && now >= self.next_sneak_at {
+            self.schedule_next_sneak();
+        }
+        // 拖延只在尚未进入休息时累计；观察期本身是休息，解锁后不恢复拖延钟
+        if self.phase == Phase::Reminding && self.reminder_active {
+            self.delay_running_since = Some(now);
+        }
+        if self.phase == Phase::Observing {
+            self.observation_started = Some(now);
+        }
+    }
+
+    /// HappyExit 记账本次 RestDelay。已记账则返回 None。
+    pub fn claim_success_delay(&mut self) -> Option<u64> {
+        if !self.reminder_active || self.phase != Phase::HappyExit {
+            return None;
+        }
+        self.reminder_active = false;
+        let secs = self.current_rest_delay().as_secs();
+        self.clear_delay_clocks();
+        Some(secs)
+    }
+
+    /// 「知道了」等未完成路径。已记账则返回 false。
+    pub fn claim_incomplete(&mut self) -> bool {
+        if !self.reminder_active || !self.in_reminder() {
+            return false;
+        }
+        self.reminder_active = false;
+        self.clear_delay_clocks();
+        true
     }
 
     pub fn start_boot_intro(&mut self) {
@@ -70,7 +206,13 @@ impl TimerState {
         }
         self.phase = Phase::Working;
         self.work_elapsed = Duration::ZERO;
-        self.segment_started = Some(Instant::now());
+        if self.session_held() {
+            self.segment_started = None;
+            self.resume_work_on_unlock = true;
+        } else {
+            self.segment_started = Some(Instant::now());
+            self.resume_work_on_unlock = false;
+        }
         self.schedule_next_sneak();
     }
 
@@ -96,6 +238,7 @@ impl TimerState {
         if matches!(self.phase, Phase::Working | Phase::SneakPeek) {
             self.flush_work();
             self.phase = Phase::Paused;
+            self.resume_work_on_unlock = false;
             self.schedule_next_sneak();
         }
     }
@@ -103,7 +246,13 @@ impl TimerState {
     pub fn resume(&mut self) {
         if self.phase == Phase::Paused {
             self.phase = Phase::Working;
-            self.segment_started = Some(Instant::now());
+            if self.session_held() {
+                self.segment_started = None;
+                self.resume_work_on_unlock = true;
+            } else {
+                self.segment_started = Some(Instant::now());
+                self.resume_work_on_unlock = false;
+            }
         }
     }
 
@@ -114,13 +263,18 @@ impl TimerState {
             Phase::Working
         };
         self.observation_started = None;
+        self.observation_banked = Duration::ZERO;
         self.last_activity = None;
+        self.reminder_active = false;
+        self.clear_delay_clocks();
         self.work_elapsed = Duration::ZERO;
-        self.segment_started = if was_paused {
-            None
+        if was_paused || self.session_held() {
+            self.segment_started = None;
+            self.resume_work_on_unlock = !was_paused && self.session_held();
         } else {
-            Some(Instant::now())
-        };
+            self.segment_started = Some(Instant::now());
+            self.resume_work_on_unlock = false;
+        }
         self.schedule_next_sneak();
     }
 
@@ -142,23 +296,40 @@ impl TimerState {
         self.flush_work();
         self.phase = Phase::Reminding;
         self.segment_started = None;
+        self.resume_work_on_unlock = false;
         self.observation_started = None;
+        self.observation_banked = Duration::ZERO;
         self.last_activity = None;
+        self.reminder_active = true;
+        self.delay_accumulated = Duration::ZERO;
+        self.delay_running_since = if self.session_held() {
+            None
+        } else {
+            Some(Instant::now())
+        };
     }
 
     pub fn enter_observing(&mut self) {
         self.phase = Phase::Observing;
-        let now = Instant::now();
-        self.observation_started = Some(now);
+        self.freeze_delay();
+        self.observation_banked = Duration::ZERO;
+        self.observation_started = if self.session_held() {
+            None
+        } else {
+            Some(Instant::now())
+        };
         self.last_activity = None;
     }
 
-    /// 观察期内有键鼠：重置「连续空闲」计时，必须重新凑满 observation_seconds。
+    /// 观察期内有键鼠：已过去的休息作废并计入拖延，连续空闲重新计算。锁屏时忽略。
     pub fn note_activity(&mut self) {
-        if self.phase == Phase::Observing {
-            self.observation_started = Some(Instant::now());
-            self.last_activity = Some(Instant::now());
+        if self.phase != Phase::Observing || self.session_held() {
+            return;
         }
+        self.delay_accumulated += self.current_observation();
+        self.observation_banked = Duration::ZERO;
+        self.observation_started = Some(Instant::now());
+        self.last_activity = Some(Instant::now());
     }
 
     pub fn start_happy_exit(&mut self) {
@@ -185,6 +356,9 @@ impl TimerState {
     }
 
     pub fn tick(&mut self) -> Option<PhaseTransition> {
+        if self.session_held() {
+            return None;
+        }
         match self.phase {
             Phase::Working => {
                 if self.current_work_elapsed() >= self.work_deadline() {
@@ -204,11 +378,12 @@ impl TimerState {
             }
             Phase::Observing => {
                 // 只有连续 observation_seconds 无键鼠才算休息成功；有活动只重置计时，不结束飘雪
-                if let Some(started) = self.observation_started {
-                    if started.elapsed() >= Duration::from_secs(self.observation_seconds as u64) {
-                        self.start_happy_exit();
-                        return Some(PhaseTransition::EnterHappyExit);
-                    }
+                if self.current_observation()
+                    >= Duration::from_secs(self.observation_seconds as u64)
+                {
+                    self.freeze_observation();
+                    self.start_happy_exit();
+                    return Some(PhaseTransition::EnterHappyExit);
                 }
             }
             _ => {}

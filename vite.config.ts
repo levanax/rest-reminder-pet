@@ -14,6 +14,7 @@ export default defineConfig(() => ({
         main: resolve(__dirname, "index.html"),
         settings: resolve(__dirname, "settings.html"),
         snow: resolve(__dirname, "snow.html"),
+        summary: resolve(__dirname, "summary.html"),
       },
     },
   },

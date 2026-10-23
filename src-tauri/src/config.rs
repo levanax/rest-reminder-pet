@@ -69,6 +69,10 @@ pub fn config_path() -> PathBuf {
     app_data_dir().join("config.json")
 }
 
+pub fn daily_stats_path() -> PathBuf {
+    app_data_dir().join("daily_rest_stats.json")
+}
+
 pub fn characters_dir() -> PathBuf {
     app_data_dir().join("characters")
 }

@@ -43,6 +43,21 @@
         "focus": false
       },
       {
+        "label": "summary",
+        "title": "Rest Reminder Pet — Summary",
+        "url": "summary.html",
+        "width": 320,
+        "height": 168,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false,
+        "shadow": false,
+        "focus": false
+      },
+      {
         "label": "settings",
         "title": "Rest Reminder Pet — Settings",
         "url": "settings.html",

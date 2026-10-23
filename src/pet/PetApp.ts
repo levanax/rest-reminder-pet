@@ -47,6 +47,7 @@ let pack: Pack | null = null;
 let loadedPackId: string | null = null;
 let moveRaf: number | null = null;
 let currentAction: string | null = null;
+let sessionHeld = false;
 let lastFrameFile: string | null = null;
 let frameSize = { w: 128, h: 128 };
 let displayMaxPx = DEFAULT_DISPLAY_MAX_PX;
@@ -194,11 +195,15 @@ function runTimeline(
 ) {
   clearTimers();
   lastFrameFile = null;
-  const start = performance.now();
+  let elapsed = 0;
+  let last = performance.now();
   const tick = (now: number) => {
-    const t = Math.min(1, (now - start) / durationMs);
+    const dt = now - last;
+    last = now;
+    if (!sessionHeld) elapsed += dt;
+    const t = Math.min(1, elapsed / durationMs);
     applyPose(sample(t), frames);
-    if (t < 1) {
+    if (t < 1 || sessionHeld) {
       moveRaf = window.requestAnimationFrame(tick);
     } else {
       moveRaf = null;
@@ -668,7 +673,7 @@ function playAnxiousWalkLoop(frames: string[]) {
   const tick = (now: number) => {
     if (currentAction !== "anxiousHop") return;
 
-    const dt = Math.min(0.05, (now - lastNow) / 1000);
+    const dt = sessionHeld ? 0 : Math.min(0.05, (now - lastNow) / 1000);
     lastNow = now;
 
     x += dir * speed * dt;
@@ -725,6 +730,9 @@ async function onPetEvent(ev: PetEvent) {
 async function main() {
   await listen<PetEvent>("pet-event", (e) => {
     void onPetEvent(e.payload);
+  });
+  await listen<{ held?: boolean }>("session-hold", (e) => {
+    sessionHeld = !!e.payload?.held;
   });
   await listen<AppConfigDto>("config-changed", (e) => {
     setDisplayMaxPx(e.payload?.displayMaxPx ?? DEFAULT_DISPLAY_MAX_PX);

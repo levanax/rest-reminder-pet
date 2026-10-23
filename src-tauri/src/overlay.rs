@@ -1,4 +1,10 @@
+use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+
+/// Last snow virtual-desktop fingerprint — skip redundant re-emits.
+static LAST_SNOW_FINGERPRINT: Mutex<String> = Mutex::new(String::new());
 
 #[cfg(windows)]
 fn cursor_pos() -> Option<(i32, i32)> {
@@ -26,7 +32,10 @@ pub fn position_pet_on_mouse_monitor(app: &AppHandle) -> Result<(), String> {
 
     let (cx, cy) = cursor_pos().unwrap_or((0, 0));
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
-    let mut target = app.primary_monitor().map_err(|e| e.to_string())?.ok_or_else(|| "无显示器".to_string())?;
+    let mut target = app
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "无显示器".to_string())?;
 
     for m in monitors {
         let pos = m.position();
@@ -81,6 +90,13 @@ struct SnowLayout {
     monitors: Vec<serde_json::Value>,
 }
 
+fn snow_layout_fingerprint(layout: &SnowLayout) -> String {
+    format!(
+        "{}:{}:{}:{}:{:?}",
+        layout.min_x, layout.min_y, layout.width, layout.height, layout.monitors
+    )
+}
+
 fn snow_layout(app: &AppHandle) -> Result<SnowLayout, String> {
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     if monitors.is_empty() {
@@ -125,6 +141,21 @@ fn snow_layout(app: &AppHandle) -> Result<SnowLayout, String> {
     })
 }
 
+fn emit_snow_active(app: &AppHandle, layout: &SnowLayout) {
+    let fp = snow_layout_fingerprint(layout);
+    if let Ok(mut prev) = LAST_SNOW_FINGERPRINT.lock() {
+        *prev = fp;
+    }
+    let _ = app.emit(
+        "snow-event",
+        serde_json::json!({
+            "active": true,
+            "window": { "width": layout.width, "height": layout.height },
+            "monitors": layout.monitors,
+        }),
+    );
+}
+
 /// Cover the full virtual desktop (all monitors) for the snowfall layer.
 fn position_snow_all_monitors(app: &AppHandle) -> Result<SnowLayout, String> {
     let snow = app
@@ -141,27 +172,131 @@ fn position_snow_all_monitors(app: &AppHandle) -> Result<SnowLayout, String> {
     Ok(layout)
 }
 
+fn snow_window_visible(app: &AppHandle) -> bool {
+    app.get_webview_window("snow")
+        .and_then(|w| w.is_visible().ok())
+        .unwrap_or(false)
+}
+
+/// Re-query monitors, resize/reposition the snow window, and notify the WebView.
+/// Used after RDP / display topology changes so pile bottoms stay on each screen edge.
+pub fn refresh_snow_layout(app: &AppHandle) -> Result<(), String> {
+    if !snow_window_visible(app) {
+        return Ok(());
+    }
+    let layout = position_snow_all_monitors(app)?;
+    emit_snow_active(app, &layout);
+    Ok(())
+}
+
+/// Like refresh_snow_layout, but skips emit when geometry fingerprint is unchanged.
+pub fn refresh_snow_layout_if_changed(app: &AppHandle) -> Result<(), String> {
+    if !snow_window_visible(app) {
+        return Ok(());
+    }
+    let layout = snow_layout(app)?;
+    let fp = snow_layout_fingerprint(&layout);
+    let unchanged = LAST_SNOW_FINGERPRINT
+        .lock()
+        .map(|prev| *prev == fp)
+        .unwrap_or(false);
+    if unchanged {
+        return Ok(());
+    }
+    let layout = position_snow_all_monitors(app)?;
+    emit_snow_active(app, &layout);
+    Ok(())
+}
+
 pub fn show_snow(app: &AppHandle) -> Result<(), String> {
+    if let Ok(mut prev) = LAST_SNOW_FINGERPRINT.lock() {
+        prev.clear();
+    }
     let layout = position_snow_all_monitors(app)?;
     let snow = app
         .get_webview_window("snow")
         .ok_or_else(|| "找不到 snow 窗口".to_string())?;
     snow.show().map_err(|e| e.to_string())?;
-    let _ = app.emit(
-        "snow-event",
-        serde_json::json!({
-            "active": true,
-            "window": { "width": layout.width, "height": layout.height },
-            "monitors": layout.monitors,
-        }),
-    );
+    emit_snow_active(app, &layout);
+
+    // RDP / DPI: WebView often still reports the old innerWidth/Height when the first
+    // event arrives. Re-apply layout a few times after the OS finishes resizing.
+    let app_delayed = app.clone();
+    thread::spawn(move || {
+        let mut elapsed = 0u64;
+        for at_ms in [80u64, 200, 500] {
+            thread::sleep(Duration::from_millis(at_ms.saturating_sub(elapsed)));
+            elapsed = at_ms;
+            let _ = refresh_snow_layout(&app_delayed);
+        }
+    });
     Ok(())
 }
 
 pub fn hide_snow(app: &AppHandle) -> Result<(), String> {
+    if let Ok(mut prev) = LAST_SNOW_FINGERPRINT.lock() {
+        prev.clear();
+    }
     let _ = app.emit("snow-event", serde_json::json!({ "active": false }));
     if let Some(snow) = app.get_webview_window("snow") {
         snow.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+const SUMMARY_W: f64 = 320.0;
+const SUMMARY_H: f64 = 168.0;
+const SUMMARY_MARGIN_DIP: f64 = 8.0;
+
+fn place_summary_on_primary(summary: &WebviewWindow, monitor: &tauri::Monitor) -> Result<(), String> {
+    let scale = monitor.scale_factor();
+    let area = monitor.work_area();
+    let width = (SUMMARY_W * scale).round().max(1.0) as u32;
+    let height = (SUMMARY_H * scale).round().max(1.0) as u32;
+    let margin = (SUMMARY_MARGIN_DIP * scale).round() as i32;
+    let x = area.position.x + area.size.width as i32 - width as i32 - margin;
+    let y = area.position.y + area.size.height as i32 - height as i32 - margin;
+    summary
+        .set_size(PhysicalSize::new(width, height))
+        .map_err(|e| e.to_string())?;
+    summary
+        .set_position(PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
+    summary
+        .set_always_on_top(true)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn show_summary(app: &AppHandle) -> Result<(), String> {
+    let summary = app
+        .get_webview_window("summary")
+        .ok_or_else(|| "找不到 summary 窗口".to_string())?;
+    let monitor = app
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "无显示器".to_string())?;
+    place_summary_on_primary(&summary, &monitor)?;
+    summary.show().map_err(|e| e.to_string())?;
+    place_summary_on_primary(&summary, &monitor)?;
+
+    let app_delayed = app.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(80));
+        let Some(summary) = app_delayed.get_webview_window("summary") else {
+            return;
+        };
+        let Ok(Some(monitor)) = app_delayed.primary_monitor() else {
+            return;
+        };
+        let _ = place_summary_on_primary(&summary, &monitor);
+    });
+    Ok(())
+}
+
+pub fn hide_summary(app: &AppHandle) -> Result<(), String> {
+    if let Some(summary) = app.get_webview_window("summary") {
+        summary.hide().map_err(|e| e.to_string())?;
     }
     Ok(())
 }

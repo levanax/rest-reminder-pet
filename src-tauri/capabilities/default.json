@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for pet and settings windows",
-  "windows": ["pet", "snow", "settings"],
+  "windows": ["pet", "snow", "settings", "summary"],
   "permissions": [
     "core:default",
     "core:window:allow-show",
