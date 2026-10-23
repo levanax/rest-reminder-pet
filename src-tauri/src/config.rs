@@ -30,12 +30,19 @@ pub struct AppConfig {
     #[serde(default = "default_snow_seconds")]
     pub snow_seconds: u32,
     pub character_pack: String,
+    /// 桌宠屏上显示边长上限（像素），资源分辨率不变，仅缩放显示
+    #[serde(default = "default_display_max_px")]
+    pub display_max_px: u32,
     pub autostart: bool,
     pub wanxiang: WanxiangConfig,
 }
 
 fn default_snow_seconds() -> u32 {
     120
+}
+
+fn default_display_max_px() -> u32 {
+    96
 }
 
 impl Default for AppConfig {
@@ -45,6 +52,7 @@ impl Default for AppConfig {
             observation_seconds: 30,
             snow_seconds: default_snow_seconds(),
             character_pack: "default".into(),
+            display_max_px: default_display_max_px(),
             autostart: false,
             wanxiang: WanxiangConfig::default(),
         }
@@ -59,6 +67,10 @@ pub fn app_data_dir() -> PathBuf {
 
 pub fn config_path() -> PathBuf {
     app_data_dir().join("config.json")
+}
+
+pub fn daily_stats_path() -> PathBuf {
+    app_data_dir().join("daily_rest_stats.json")
 }
 
 pub fn characters_dir() -> PathBuf {
@@ -77,6 +89,7 @@ pub fn load_config() -> AppConfig {
             cfg.work_minutes = cfg.work_minutes.clamp(1, 180);
             cfg.observation_seconds = cfg.observation_seconds.clamp(10, 120);
             cfg.snow_seconds = cfg.snow_seconds.clamp(30, 600);
+            cfg.display_max_px = cfg.display_max_px.clamp(48, 192);
             return cfg;
         }
     }

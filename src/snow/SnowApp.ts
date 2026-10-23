@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 type Layer = "far" | "mid" | "near";
@@ -21,16 +22,266 @@ type Flake = {
 const canvas = document.getElementById("snow") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d", { alpha: true })!;
 
+/** Horizontal resolution of the bottom snow pile heightmap (px per column). */
+const PILE_STEP = 6;
+/** Max pile height as fraction of screen — high enough to bury the pet. */
+const PILE_MAX_FRAC = 0.42;
+/** Max pile height in px (hard cap). */
+const PILE_MAX_PX = 360;
+
+type MonitorRectPhysical = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type SnowEventPayload = {
+  active: boolean;
+  window?: { width: number; height: number };
+  monitors?: MonitorRectPhysical[];
+};
+
+/** One physical monitor's snow pile, in CSS pixels relative to the snow window. */
+type ScreenPile = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  pile: Float32Array;
+};
+
 let flakes: Flake[] = [];
 let running = false;
+let paused = false;
 let raf = 0;
 let w = 0;
 let h = 0;
 let wind = 0;
 let windTarget = 0;
 let lastT = 0;
+/** Per-monitor settled snow along each monitor's own bottom edge. */
+let screens: ScreenPile[] = [];
+/** Last physical layout from Rust (for remap on resize). */
+let lastLayout: { window: { width: number; height: number }; monitors: MonitorRectPhysical[] } | null =
+  null;
 
 const spriteCache = new Map<string, HTMLCanvasElement>();
+
+function maxPileHeightFor(screenH: number) {
+  return Math.min(PILE_MAX_PX, screenH * PILE_MAX_FRAC);
+}
+
+function pileColsFor(screenW: number) {
+  return Math.max(1, Math.ceil(screenW / PILE_STEP) + 1);
+}
+
+function makeScreen(x: number, y: number, sw: number, sh: number, old?: Float32Array): ScreenPile {
+  const cols = pileColsFor(sw);
+  const pile = new Float32Array(cols);
+  if (old?.length) {
+    const scale = old.length / cols;
+    for (let i = 0; i < cols; i++) {
+      const j = Math.min(old.length - 1, Math.floor(i * scale));
+      pile[i] = old[j];
+    }
+  }
+  return { x, y, w: sw, h: sh, pile };
+}
+
+function fallbackScreens(): ScreenPile[] {
+  return [makeScreen(0, 0, w, h)];
+}
+
+/**
+ * After physical→CSS mapping, force the virtual-desktop bbox onto this canvas.
+ * RDP / DPI races often leave innerWidth/Height out of sync with Rust's physical
+ * size, so pile bottoms float mid-screen or sit below the visible edge.
+ */
+function alignScreensToCanvas(preservePiles: Float32Array[]) {
+  if (!screens.length || w <= 0 || h <= 0) {
+    screens = fallbackScreens();
+    return;
+  }
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const s of screens) {
+    minX = Math.min(minX, s.x);
+    minY = Math.min(minY, s.y);
+    maxX = Math.max(maxX, s.x + s.w);
+    maxY = Math.max(maxY, s.y + s.h);
+  }
+  const layoutW = maxX - minX;
+  const layoutH = maxY - minY;
+  if (!(layoutW > 1) || !(layoutH > 1)) {
+    screens = fallbackScreens();
+    return;
+  }
+
+  const needsX = Math.abs(minX) > 1.5 || Math.abs(maxX - w) > 1.5;
+  const needsY = Math.abs(minY) > 1.5 || Math.abs(maxY - h) > 1.5;
+  if (!needsX && !needsY) return;
+
+  const sx = w / layoutW;
+  const sy = h / layoutH;
+  screens = screens.map((s, idx) =>
+    makeScreen(
+      (s.x - minX) * sx,
+      (s.y - minY) * sy,
+      s.w * sx,
+      s.h * sy,
+      preservePiles[idx] ?? s.pile,
+    ),
+  );
+}
+
+/** Map physical monitor rects from Rust into CSS space of this window. */
+function applyMonitorLayout(
+  physicalWindow: { width: number; height: number },
+  physicalMonitors: MonitorRectPhysical[],
+  preserve = false,
+) {
+  lastLayout = { window: physicalWindow, monitors: physicalMonitors };
+  if (!physicalMonitors.length || physicalWindow.width <= 0 || physicalWindow.height <= 0) {
+    screens = fallbackScreens();
+    return;
+  }
+  const sx = w / physicalWindow.width;
+  const sy = h / physicalWindow.height;
+  const prev = preserve ? screens : [];
+  const prevPiles = prev.map((s) => s.pile);
+  screens = physicalMonitors.map((m, idx) =>
+    makeScreen(m.x * sx, m.y * sy, m.width * sx, m.height * sy, prev[idx]?.pile),
+  );
+  if (!screens.length) {
+    screens = fallbackScreens();
+    return;
+  }
+  alignScreensToCanvas(preserve ? prevPiles : screens.map((s) => s.pile));
+}
+
+function resetPiles() {
+  if (lastLayout) {
+    applyMonitorLayout(lastLayout.window, lastLayout.monitors, false);
+  } else {
+    screens = fallbackScreens();
+  }
+}
+
+function pileIndex(pile: Float32Array, localX: number) {
+  const i = Math.floor(localX / PILE_STEP);
+  return Math.max(0, Math.min(pile.length - 1, i));
+}
+
+function pileHeightAt(screen: ScreenPile, localX: number) {
+  const pile = screen.pile;
+  if (!pile.length) return 0;
+  const f = localX / PILE_STEP;
+  const i0 = Math.max(0, Math.min(pile.length - 1, Math.floor(f)));
+  const i1 = Math.max(0, Math.min(pile.length - 1, i0 + 1));
+  const t = f - i0;
+  return pile[i0] * (1 - t) + pile[i1] * t;
+}
+
+/** Add mass to a monitor pile and lightly smooth neighbors so mounds look soft. */
+function depositSnow(screen: ScreenPile, localX: number, amount: number) {
+  const pile = screen.pile;
+  if (!pile.length) return;
+  const maxH = maxPileHeightFor(screen.h);
+  const i = pileIndex(pile, localX);
+  pile[i] = Math.min(maxH, pile[i] + amount);
+  for (const d of [-1, 1]) {
+    const j = i + d;
+    if (j < 0 || j >= pile.length) continue;
+    pile[j] = Math.min(maxH, pile[j] + amount * 0.35);
+  }
+}
+
+/** Gentle avalanche: tall columns spill into shorter neighbors (per monitor). */
+function settlePiles(dt: number) {
+  const rate = Math.min(1, dt * 2.2);
+  for (const screen of screens) {
+    const pile = screen.pile;
+    if (pile.length < 2) continue;
+    const maxH = maxPileHeightFor(screen.h);
+    for (let i = 0; i < pile.length - 1; i++) {
+      const diff = pile[i] - pile[i + 1];
+      if (Math.abs(diff) < 1.2) continue;
+      const move = diff * 0.18 * rate;
+      pile[i] -= move;
+      pile[i + 1] += move;
+    }
+    for (let i = 0; i < pile.length; i++) {
+      pile[i] = Math.min(maxH, Math.max(0, pile[i]));
+    }
+  }
+}
+
+/**
+ * Find the topmost monitor ground under (x,y) that the flake has reached.
+ * Picks the highest (smallest Y) landing line among monitors covering this X.
+ */
+function landingAt(x: number, y: number, flakeSize: number): {
+  screen: ScreenPile;
+  localX: number;
+  ground: number;
+} | null {
+  let best: { screen: ScreenPile; localX: number; ground: number } | null = null;
+  for (const screen of screens) {
+    if (x < screen.x || x >= screen.x + screen.w) continue;
+    const localX = x - screen.x;
+    const ground = screen.y + screen.h - pileHeightAt(screen, localX) - flakeSize * 0.35;
+    if (y < ground) continue;
+    if (!best || ground < best.ground) {
+      best = { screen, localX, ground };
+    }
+  }
+  return best;
+}
+
+function drawPiles() {
+  for (const screen of screens) {
+    const pile = screen.pile;
+    if (!pile.length) continue;
+    const maxH = maxPileHeightFor(screen.h);
+    if (maxH <= 0) continue;
+    const bottom = screen.y + screen.h;
+
+    // soft blue-white mound along this monitor's bottom
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(screen.x, bottom + 2);
+    for (let i = 0; i < pile.length; i++) {
+      const x = screen.x + i * PILE_STEP;
+      const py = bottom - pile[i];
+      ctx.lineTo(x, py);
+    }
+    ctx.lineTo(screen.x + screen.w + 2, bottom - pile[pile.length - 1]);
+    ctx.lineTo(screen.x + screen.w + 2, bottom + 2);
+    ctx.closePath();
+
+    // denser fill so deep snow can fully bury the cat underneath
+    const grd = ctx.createLinearGradient(0, bottom - maxH, 0, bottom);
+    grd.addColorStop(0, "rgba(248,252,255,0.82)");
+    grd.addColorStop(0.4, "rgba(236,245,255,0.94)");
+    grd.addColorStop(1, "rgba(220,234,250,0.98)");
+    ctx.fillStyle = grd;
+    ctx.fill();
+
+    // sparkle rim along the crest
+    ctx.beginPath();
+    ctx.moveTo(screen.x, bottom - pile[0]);
+    for (let i = 1; i < pile.length; i++) {
+      ctx.lineTo(screen.x + i * PILE_STEP, bottom - pile[i]);
+    }
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
 
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -39,6 +290,14 @@ function resize() {
   canvas.width = Math.floor(w * dpr);
   canvas.height = Math.floor(h * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (lastLayout) {
+    applyMonitorLayout(lastLayout.window, lastLayout.monitors, true);
+  } else if (!screens.length) {
+    screens = fallbackScreens();
+  } else {
+    // keep single full-canvas pile if no layout yet
+    screens = [makeScreen(0, 0, w, h, screens[0]?.pile)];
+  }
 }
 
 /** Soft circular powder flake (distant snow). */
@@ -213,20 +472,64 @@ function drawFlake(f: Flake) {
   ctx.restore();
 }
 
-function startSnow() {
+/** Apply a layout update without wiping flakes / piles (RDP resync). */
+function syncLayoutFromPayload(payload: SnowEventPayload, preservePiles: boolean) {
   resize();
+  if (payload.window && payload.monitors?.length) {
+    applyMonitorLayout(payload.window, payload.monitors, preservePiles);
+  } else if (lastLayout) {
+    applyMonitorLayout(lastLayout.window, lastLayout.monitors, preservePiles);
+  } else {
+    screens = fallbackScreens();
+  }
+  densify();
+}
+
+/** Re-read CSS size for a few frames — WebView often lags set_size under RDP. */
+function scheduleLayoutResync() {
+  const delays = [0, 50, 120, 280, 600];
+  for (const ms of delays) {
+    window.setTimeout(() => {
+      if (!running || !lastLayout) return;
+      const prevW = w;
+      const prevH = h;
+      resize();
+      if (w !== prevW || h !== prevH || screens.length === 0) {
+        applyMonitorLayout(lastLayout.window, lastLayout.monitors, true);
+        densify();
+      } else {
+        // Size stable but bottoms may still be wrong relative to canvas
+        alignScreensToCanvas(screens.map((s) => s.pile));
+      }
+    }, ms);
+  }
+}
+
+function startSnow(payload?: SnowEventPayload) {
+  resize();
+  if (payload?.window && payload.monitors?.length) {
+    applyMonitorLayout(payload.window, payload.monitors, false);
+  } else {
+    resetPiles();
+  }
   flakes = [];
   densify();
   for (let i = 0; i < flakes.length; i++) flakes[i] = makeFlake(false);
   wind = 0;
   windTarget = (Math.random() - 0.5) * 0.6;
   lastT = performance.now();
+  scheduleLayoutResync();
 
   if (running) return;
   running = true;
 
   const tick = (now: number) => {
     if (!running) return;
+    if (paused) {
+      lastT = now;
+      raf = requestAnimationFrame(tick);
+      return;
+    }
     const dt = Math.min(0.05, (now - lastT) / 1000);
     lastT = now;
     const t = now / 1000;
@@ -247,16 +550,34 @@ function startSnow() {
         f.y += f.speed * (1 + Math.sin(t * 0.7 + f.phase) * 0.08);
         f.x += wind * (0.4 + f.size * 0.08) + Math.sin(t * 0.9 + f.phase) * f.drift;
 
-        if (f.y - f.size > h + 20) {
-          f.y = -20 - Math.random() * 60;
-          f.x = Math.random() * w;
-        }
         if (f.x < -40) f.x = w + 40;
         if (f.x > w + 40) f.x = -40;
+
+        // land on the topmost monitor pile under this column
+        const land = landingAt(f.x, f.y, f.size);
+        if (land) {
+          const mass =
+            (f.layer === "near" ? 2.4 : f.layer === "mid" ? 1.5 : 0.75) *
+            (0.7 + f.size * 0.12);
+          depositSnow(land.screen, land.localX, mass);
+          f.y = -20 - Math.random() * 60;
+          f.x = Math.random() * w;
+          continue;
+        }
+
+        // fell through a gap between monitors — recycle
+        if (f.y > h + 40) {
+          f.y = -20 - Math.random() * 60;
+          f.x = Math.random() * w;
+          continue;
+        }
 
         drawFlake(f);
       }
     }
+
+    settlePiles(dt);
+    drawPiles();
 
     raf = requestAnimationFrame(tick);
   };
@@ -267,19 +588,44 @@ function stopSnow() {
   running = false;
   cancelAnimationFrame(raf);
   flakes = [];
+  lastLayout = null;
+  screens = [];
   ctx.clearRect(0, 0, w, h);
 }
 
+let resizeRefreshTimer = 0;
 window.addEventListener("resize", () => {
   if (!running) return;
   resize();
   densify();
+  // Ask Rust to re-measure monitors after the OS settles (RDP resolution flip).
+  window.clearTimeout(resizeRefreshTimer);
+  resizeRefreshTimer = window.setTimeout(() => {
+    if (!running) return;
+    void invoke("refresh_snow_layout_cmd").catch(() => {
+      if (lastLayout) applyMonitorLayout(lastLayout.window, lastLayout.monitors, true);
+    });
+  }, 120);
 });
 
 async function main() {
-  await listen<{ active: boolean }>("snow-event", (e) => {
-    if (e.payload?.active) startSnow();
-    else stopSnow();
+  await listen<{ held?: boolean }>("session-hold", (e) => {
+    paused = !!e.payload?.held;
+    if (paused) lastT = performance.now();
+  });
+  await listen<SnowEventPayload>("snow-event", (e) => {
+    const payload = e.payload;
+    if (!payload?.active) {
+      stopSnow();
+      return;
+    }
+    // Already snowing: layout-only refresh (delayed RDP resync must not reset piles).
+    if (running) {
+      syncLayoutFromPayload(payload, true);
+      scheduleLayoutResync();
+      return;
+    }
+    startSnow(payload);
   });
 }
 

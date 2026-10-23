@@ -5,6 +5,7 @@ type AppConfig = {
   workMinutes: number;
   observationSeconds: number;
   characterPack: string;
+  displayMaxPx: number;
   autostart: boolean;
   wanxiang: { apiKey?: string | null; endpoint?: string | null };
 };
@@ -35,6 +36,12 @@ root.innerHTML = `
     </div>
 
     <div class="field">
+      <label for="displayMaxPx">猫咪显示大小（像素）</label>
+      <input id="displayMaxPx" type="number" min="48" max="192" step="8" />
+      <span class="sub" style="margin:0">资源分辨率不变，仅缩放屏上显示；默认 96，范围 48–192</span>
+    </div>
+
+    <div class="field">
       <label class="row" for="autostart">
         <input id="autostart" type="checkbox" />
         登录 Windows 时启动（默认关闭）
@@ -57,6 +64,7 @@ root.innerHTML = `
 const workMinutes = document.getElementById("workMinutes") as HTMLInputElement;
 const observationSeconds = document.getElementById("observationSeconds") as HTMLInputElement;
 const characterPack = document.getElementById("characterPack") as HTMLSelectElement;
+const displayMaxPx = document.getElementById("displayMaxPx") as HTMLInputElement;
 const autostart = document.getElementById("autostart") as HTMLInputElement;
 const apiKey = document.getElementById("apiKey") as HTMLInputElement;
 const status = document.getElementById("status")!;
@@ -84,6 +92,7 @@ async function load() {
   const cfg = await invoke<AppConfig>("get_config");
   workMinutes.value = String(cfg.workMinutes);
   observationSeconds.value = String(cfg.observationSeconds);
+  displayMaxPx.value = String(cfg.displayMaxPx ?? 96);
   autostart.checked = !!cfg.autostart;
   apiKey.value = cfg.wanxiang?.apiKey || "";
   await refreshPacks(cfg.characterPack);
@@ -95,6 +104,7 @@ document.getElementById("save")!.addEventListener("click", async () => {
       workMinutes: Number(workMinutes.value),
       observationSeconds: Number(observationSeconds.value),
       characterPack: characterPack.value,
+      displayMaxPx: Number(displayMaxPx.value) || 96,
       autostart: autostart.checked,
       wanxiang: {
         apiKey: apiKey.value.trim() || null,
