@@ -130,35 +130,9 @@ def write_preview_gifs(frames: dict[str, list[str]], actions: dict) -> None:
 
 
 def write_app_icon(raw: Image.Image) -> None:
-    """Square face cutout → icons/icon.png (then prefer `npm run gen-icons`)."""
-    # Face-centered crop for tray / installer clarity
-    w, h = raw.size
-    l, t, r, b = 0.16, 0.00, 0.84, 0.62
-    face = raw.crop((int(w * l), int(h * t), int(w * r), int(h * b)))
-    face = ImageEnhance.Contrast(face).enhance(1.08)
-    face = soft_ellipse_cutout(face)
-    canvas = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    sized = face.resize((960, 960), Image.Resampling.LANCZOS)
-    canvas.paste(sized, ((1024 - 960) // 2, (1024 - 960) // 2), sized)
-    ICON_PNG.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(ICON_PNG, "PNG")
-    # Windows sizes used by tauri.conf.json
-    for path, px in [
-        (ICON_PNG.parent / "32x32.png", 32),
-        (ICON_PNG.parent / "64x64.png", 64),
-        (ICON_PNG.parent / "128x128.png", 128),
-        (ICON_PNG.parent / "128x128@2x.png", 256),
-    ]:
-        canvas.resize((px, px), Image.Resampling.LANCZOS).save(path, "PNG")
-    ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-    ico_imgs = [canvas.resize(s, Image.Resampling.LANCZOS) for s in ico_sizes]
-    ico_imgs[0].save(
-        ICON_PNG.parent / "icon.ico",
-        format="ICO",
-        sizes=ico_sizes,
-        append_images=ico_imgs[1:],
-    )
-    print(f"  app icon: {ICON_PNG.relative_to(ROOT)}")
+    """App icon is maintained by scripts/gen-app-icon.py — do not overwrite from photo."""
+    del raw
+    print("  app icon: skipped (use scripts/gen-app-icon.py + npm run gen-icons)")
 
 
 def main() -> None:

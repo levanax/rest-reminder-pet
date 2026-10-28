@@ -7,7 +7,7 @@ mod session_lock;
 mod timer;
 
 use character_pack::{import_pack_from_folder, list_pack_names, load_pack, seed_default_pack};
-use config::{load_config, save_config, AppConfig};
+use config::{load_config, normalize_reminder_scene, save_config, AppConfig};
 use daily_stats::{DailyRestStats, SummaryPayload};
 use input_hook::start_input_hook;
 use overlay::{
@@ -118,6 +118,25 @@ fn end_sneak_peek(app: &AppHandle, state: &AppState) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_reminder_scene(pref: &str) -> String {
+    match normalize_reminder_scene(pref).as_str() {
+        "snow" => "snow".into(),
+        "rainGlass" => "rainGlass".into(),
+        _ => {
+            // random: use a cheap OS-entropy mix without extra crate
+            let n = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos())
+                .unwrap_or(0);
+            if n % 2 == 0 {
+                "snow".into()
+            } else {
+                "rainGlass".into()
+            }
+        }
+    }
+}
+
 fn begin_reminder(app: &AppHandle, state: &AppState) -> Result<(), String> {
     {
         let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
@@ -136,9 +155,10 @@ fn begin_reminder(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let ev = timer.to_event(Some("crawl"));
         emit_pet(app, &ev);
     }
-    // 先小猫、再全屏雪：积雪可盖住甚至淹没猫；雪一直下到休息成功或手动「知道了」
+    let scene = resolve_reminder_scene(&load_config().reminder_scene);
+    // 先小猫、再全屏景致：一直持续到休息成功或手动「知道了」
     show_pet(app)?;
-    show_snow(app)?;
+    show_snow(app, &scene)?;
     Ok(())
 }
 
@@ -146,9 +166,9 @@ fn begin_reminder(app: &AppHandle, state: &AppState) -> Result<(), String> {
 fn finish_exit(app: &AppHandle, state: &AppState) -> Result<(), String> {
     {
         let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
-        if timer.claim_incomplete() {
+        if let Some(delay_secs) = timer.claim_incomplete() {
             let mut stats = state.stats.lock().map_err(|e| e.to_string())?;
-            stats.record_incomplete();
+            stats.record_incomplete(delay_secs);
         }
     }
     let was_paused = *state
@@ -190,8 +210,12 @@ fn save_app_config(app: AppHandle, state: State<AppState>, cfg: AppConfig) -> Re
     cfg.observation_seconds = cfg.observation_seconds.clamp(10, 120);
     cfg.display_max_px = cfg.display_max_px.clamp(48, 192);
     let existing = load_config();
-    // Settings UI does not edit snow; keep whatever is already on disk
+    // Settings UI does not edit snow duration; keep whatever is already on disk
     cfg.snow_seconds = existing.snow_seconds.clamp(30, 600);
+    if cfg.reminder_scene.is_empty() {
+        cfg.reminder_scene = existing.reminder_scene;
+    }
+    cfg.reminder_scene = normalize_reminder_scene(&cfg.reminder_scene);
     if cfg
         .wanxiang
         .endpoint
@@ -321,6 +345,19 @@ fn refresh_snow_layout_cmd(app: AppHandle) -> Result<(), String> {
     refresh_snow_layout(&app)
 }
 
+#[tauri::command]
+fn get_daily_stats(state: State<AppState>) -> Result<DailyRestStats, String> {
+    let mut stats = state.stats.lock().map_err(|e| e.to_string())?;
+    stats.ensure_today();
+    Ok(stats.clone())
+}
+
+#[tauri::command]
+fn open_main_ui(app: AppHandle, tab: Option<String>) -> Result<(), String> {
+    let tab = tab.unwrap_or_else(|| "today".into());
+    show_settings(&app, &tab)
+}
+
 fn sync_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
     let manager = app.autolaunch();
@@ -359,7 +396,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             let state = app.state::<AppState>();
             match event.id.as_ref() {
                 "settings" => {
-                    let _ = show_settings(app);
+                    let _ = show_settings(app, "settings");
                 }
                 "pause" => {
                     let _ = do_pause(app, state.inner());
@@ -389,7 +426,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             } = event
             {
                 let app = tray.app_handle();
-                let _ = show_settings(app);
+                let _ = show_settings(app, "today");
             }
         })
         .build(app)?;
@@ -473,7 +510,9 @@ pub fn run() {
             remind_now,
             notify_action_done,
             get_status,
-            refresh_snow_layout_cmd
+            refresh_snow_layout_cmd,
+            get_daily_stats,
+            open_main_ui
         ])
         .setup(move |app| {
             let resource_dir = app

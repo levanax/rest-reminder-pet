@@ -9,8 +9,10 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "gen-sprites": "python scripts/build-ragdoll-sprites.py",
+    "gen-icon-source": "python scripts/gen-app-icon.py",
     "gen-icons": "tauri icon src-tauri/icons/icon.png",
-    "demo": "scripts\\preview-demo.cmd"
+    "demo": "scripts\\preview-demo.cmd",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -19,6 +21,7 @@
     "@tauri-apps/plugin-opener": "^2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.55.0",
     "@tauri-apps/cli": "^2",
     "@types/node": "^26.6.4",
     "typescript": "~5.8.3",
