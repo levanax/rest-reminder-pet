@@ -6,6 +6,13 @@ import {
   startRainGlass,
   stopRainGlass,
 } from "./RainGlassRenderer";
+import {
+  isRainStreakRunning,
+  onRainStreakResize,
+  setRainStreakPaused,
+  startRainStreak,
+  stopRainStreak,
+} from "./RainStreakRenderer";
 import { normalizeScene, type ReminderScene, type SnowEventPayload } from "./sceneTypes";
 import {
   isSnowRunning,
@@ -20,18 +27,24 @@ const canvas = document.getElementById("snow") as HTMLCanvasElement;
 
 let activeScene: ReminderScene | null = null;
 
+function anyRunning() {
+  return isSnowRunning() || isRainGlassRunning() || isRainStreakRunning();
+}
+
 function stopAll() {
   stopSnow();
   stopRainGlass();
+  stopRainStreak();
   activeScene = null;
 }
 
 function startScene(scene: ReminderScene, payload: SnowEventPayload) {
+  stopAll();
   if (scene === "rainGlass") {
-    stopSnow();
     startRainGlass(canvas);
+  } else if (scene === "rainStreak") {
+    startRainStreak(canvas);
   } else {
-    stopRainGlass();
     startSnow(payload);
   }
   activeScene = scene;
@@ -42,6 +55,7 @@ async function main() {
     const held = !!e.payload?.held;
     setSnowPaused(held);
     setRainGlassPaused(held);
+    setRainStreakPaused(held);
   });
 
   await listen<SnowEventPayload>("snow-event", (e) => {
@@ -51,7 +65,7 @@ async function main() {
       return;
     }
     const scene = normalizeScene(payload.scene);
-    if (activeScene === scene && (isSnowRunning() || isRainGlassRunning())) {
+    if (activeScene === scene && anyRunning()) {
       if (scene === "snow") syncSnowLayout(payload);
       return;
     }
@@ -61,6 +75,7 @@ async function main() {
   window.addEventListener("resize", () => {
     onSnowResize();
     onRainGlassResize();
+    onRainStreakResize();
   });
 }
 

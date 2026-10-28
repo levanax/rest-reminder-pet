@@ -73,5 +73,9 @@ ReminderScene 的下雪子类型；积雪可沿各显示器底边堆积。
 _Avoid_: 天气特效
 
 **RainGlassScene**:
-ReminderScene 的雨雾玻璃子类型；水珠/雨痕与雾气逐渐糊满屏幕。
-_Avoid_: 滤镜
+ReminderScene 的玻璃冷凝起雾子类型（类似车内冷气、外侧湿热导致内侧起雾）；斑驳雾斑逐渐变浓，可出现静止凝珠，无下落雨痕。
+_Avoid_: 滤镜、下雨特效
+
+**RainStreakScene**:
+ReminderScene 的玻璃下雨子类型；雨滴沿玻璃滑落，由毛毛雨逐渐加大至粗水滴划过。
+_Avoid_: 暴雨粒子、天气模拟

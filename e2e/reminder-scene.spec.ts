@@ -25,7 +25,7 @@ test("下雪场景 canvas 有像素", async ({ page }) => {
   await page.screenshot({ path: path.join("test-results", "scene-snow.png") });
 });
 
-test("雨雾场景逐渐变亮糊", async ({ page }) => {
+test("玻璃起雾场景有雾层像素", async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 600 });
   await page.goto("/e2e/fixtures/scene-mock.html?scene=rainGlass");
   await page.waitForTimeout(400);
@@ -35,12 +35,10 @@ test("雨雾场景逐渐变亮糊", async ({ page }) => {
     const d = ctx.getImageData(c.width / 2, c.height / 2, 1, 1).data;
     return d[0] + d[1] + d[2];
   });
-  // Jump fog clock by restarting with patched startedAt via evaluate after wait
   await page.waitForTimeout(2500);
   const later = await page.evaluate(() => {
     const c = document.getElementById("snow") as HTMLCanvasElement;
     const ctx = c.getContext("2d")!;
-    // sample several points average alpha-ish luminance
     let sum = 0;
     for (const [x, y] of [
       [0.3, 0.3],
@@ -53,8 +51,15 @@ test("雨雾场景逐渐变亮糊", async ({ page }) => {
     return sum / 3;
   });
   expect(await canvasNonEmpty(page)).toBeTruthy();
-  // fog adds light veil — later should be brighter or at least painted
   expect(later).toBeGreaterThan(0);
   expect(early).toBeGreaterThanOrEqual(0);
   await page.screenshot({ path: path.join("test-results", "scene-rain-glass.png") });
+});
+
+test("玻璃下雨场景有雨痕像素", async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.goto("/e2e/fixtures/scene-mock.html?scene=rainStreak");
+  await page.waitForTimeout(1200);
+  expect(await canvasNonEmpty(page)).toBeTruthy();
+  await page.screenshot({ path: path.join("test-results", "scene-rain-streak.png") });
 });

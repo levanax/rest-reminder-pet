@@ -122,16 +122,17 @@ fn resolve_reminder_scene(pref: &str) -> String {
     match normalize_reminder_scene(pref).as_str() {
         "snow" => "snow".into(),
         "rainGlass" => "rainGlass".into(),
+        "rainStreak" => "rainStreak".into(),
         _ => {
-            // random: use a cheap OS-entropy mix without extra crate
+            // random among three scenes
             let n = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.subsec_nanos())
                 .unwrap_or(0);
-            if n % 2 == 0 {
-                "snow".into()
-            } else {
-                "rainGlass".into()
+            match n % 3 {
+                0 => "snow".into(),
+                1 => "rainGlass".into(),
+                _ => "rainStreak".into(),
             }
         }
     }

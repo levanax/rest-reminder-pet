@@ -29,7 +29,7 @@ pub struct AppConfig {
     /// 休息提醒时飘雪持续秒数（与小猫退场独立）
     #[serde(default = "default_snow_seconds")]
     pub snow_seconds: u32,
-    /// 提醒景致：random | snow | rainGlass
+    /// 提醒景致：random | snow | rainGlass | rainStreak
     #[serde(default = "default_reminder_scene")]
     pub reminder_scene: String,
     pub character_pack: String,
@@ -54,7 +54,7 @@ fn default_display_max_px() -> u32 {
 
 pub fn normalize_reminder_scene(raw: &str) -> String {
     match raw {
-        "snow" | "rainGlass" | "random" => raw.to_string(),
+        "snow" | "rainGlass" | "rainStreak" | "random" => raw.to_string(),
         _ => default_reminder_scene(),
     }
 }
