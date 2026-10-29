@@ -185,14 +185,15 @@ impl TimerState {
         Some(secs)
     }
 
-    /// 「知道了」等未完成路径。已记账则返回 false。
-    pub fn claim_incomplete(&mut self) -> bool {
+    /// 「知道了」等未完成路径。已记账则返回 None；否则返回本次已累计拖延秒数。
+    pub fn claim_incomplete(&mut self) -> Option<u64> {
         if !self.reminder_active || !self.in_reminder() {
-            return false;
+            return None;
         }
         self.reminder_active = false;
+        let secs = self.current_rest_delay().as_secs();
         self.clear_delay_clocks();
-        true
+        Some(secs)
     }
 
     pub fn start_boot_intro(&mut self) {

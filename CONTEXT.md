@@ -25,12 +25,20 @@ _Avoid_: 掉落结束
 _Avoid_: 超时、等待时间
 
 **DailyRestStats**:
-一个本地日历日的休息记账：成功次数、未完成次数，以及各次成功的 RestDelay 之和。跨日清零。
+一个本地日历日的休息记账：成功次数、未完成次数、各次成功的 RestDelay 之和，以及带时刻的 RestEvent 列表。跨日清零。
 _Avoid_: 报表、历史
+
+**RestEvent**:
+当日一次提醒结果快照：本地时刻、成功或未完成、本次 RestDelay 秒数；供主窗口「今日」时间轴使用。
+_Avoid_: 日志条目
 
 **RestSummary**:
 HappyExit 之后在主显示器右下角短暂出现的休息总结，展示当日成功次数、提醒次数，以及本次与当日累计 RestDelay。
 _Avoid_: 通知、弹窗、Toast
+
+**MainWindow**:
+托盘打开的主界面：默认「今日」Tab（KPI + 棒棒糖时间轴 + 事件列表），第二 Tab「设置」。
+_Avoid_: 仪表盘
 
 **SessionLock**:
 锁屏或睡眠期间，WorkSession、ObservationWindow、RestDelay、桌宠动作与 SnowScene 全部暂停的时段；解除后从暂停处继续。用户手动暂停仍优先。
@@ -56,6 +64,22 @@ _Avoid_: 偷窥、彩蛋
 程序启动时桌宠从桌面底部跳上屏顶再消失的入场；结束后才开始累计 WorkSession。
 _Avoid_: 开场、Splash
 
-**SnowScene**:
-Reminder 期间覆盖全部显示器的飘雪景致；点击穿透；须连续无键鼠达到 ObservationWindow 才停雪，否则一直持续。
+**ReminderScene**:
+Reminder 期间覆盖全部显示器的景致层（下雪 Snow、雨雾玻璃 RainGlass、玻璃下雨 RainStreak、百叶窗 Blinds）；点击穿透；配置可为固定或随机；须连续无键鼠达到 ObservationWindow 才结束，否则一直持续。
 _Avoid_: 天气特效、粒子
+
+**SnowScene**:
+ReminderScene 的下雪子类型；积雪可沿各显示器底边堆积。
+_Avoid_: 天气特效
+
+**RainGlassScene**:
+ReminderScene 的玻璃冷凝起雾子类型（类似车内冷气、外侧湿热导致内侧起雾）；斑驳雾斑逐渐变浓，可出现静止凝珠，无下落雨痕。
+_Avoid_: 滤镜、下雨特效
+
+**RainStreakScene**:
+ReminderScene 的玻璃下雨子类型；雨滴沿玻璃滑落，由毛毛雨逐渐加大至粗水滴划过。
+_Avoid_: 暴雨粒子、天气模拟
+
+**BlindsScene**:
+ReminderScene 的百叶窗子类型；叶片以打开状态先从顶部放下，短暂停留后缓慢合拢遮光。
+_Avoid_: 窗帘、卷帘、滤镜

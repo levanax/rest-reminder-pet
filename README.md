@@ -1,6 +1,6 @@
 # Rest Reminder Pet
 
-Win11 桌面休息提醒桌宠：启动时小猫从桌面底部跳上屏顶；到点后从顶部爬下往下看，并在**所有屏幕**飘雪。须**连续无键鼠**达到观察秒数才算休息成功并停雪；有操作会重新计时，雪不停。未到休息点时，也会偶尔从屏顶偷偷探头往下看一眼再缩回。
+Win11 桌面休息提醒桌宠：启动时小猫从桌面底部跳上屏顶；到点后从顶部爬下往下看，并在**所有屏幕**展示提醒景致（下雪 / 玻璃起雾 / 玻璃下雨 / 百叶窗，设置里可选，默认随机）。须**连续无键鼠**达到观察秒数才算休息成功并结束景致；有操作会重新计时，景致不停。未到休息点时，也会偶尔从屏顶偷偷探头往下看一眼再缩回。主窗口默认「今日」统计（棒棒糖时间轴 + 记录），第二 Tab 为设置。
 
 ## 环境要求
 
@@ -36,7 +36,8 @@ scripts\preview-demo.cmd
 
 启动后看系统托盘图标：
 
-- 左键 /「打开设置」：工作时长、观察秒数、形象包、自启、API Key
+- 左键：打开主窗口「今日」Tab（当日 KPI、时间轴、记录）
+- 「打开设置」：同一主窗口切到设置（工作时长、观察秒数、提醒景致、形象包、自启、API Key）
 - 「立即提醒」：立刻测试动画（无需等满时长）
 - 「暂停计时」/「继续计时」
 - 「知道了」：结束当前提醒并重置计时（记为当日未完成，不出休息总结）
@@ -76,6 +77,8 @@ cargo run --bin rest-reminder-gen -- --name my-cat --prompt "blue-gray cartoon c
 
 ## 脚本
 
-- `npm run gen-sprites`：用源照片重新生成内置 `default` 形象帧、预览 GIF 与应用图标（需 Python + Pillow）
-- `npm run gen-icons`：用 `src-tauri/icons/icon.png` 生成全套平台图标（可选，Tauri CLI）
+- `npm run gen-sprites`：用源照片重新生成内置 `default` 形象帧与预览 GIF（需 Python + Pillow；不再覆盖应用图标）
+- `npm run gen-icon-source`：生成黑底白猫剪影 `icon.png`（需 Pillow）
+- `npm run gen-icons`：用 `src-tauri/icons/icon.png` 生成全套平台图标（Tauri CLI）
+- `npm run test:e2e`：Playwright 视觉用例（截图 + video → `test-results/`）
 - `npm run tauri build`：打 Windows 安装包

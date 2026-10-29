@@ -59,10 +59,10 @@
       },
       {
         "label": "settings",
-        "title": "Rest Reminder Pet — Settings",
+        "title": "Rest Reminder Pet",
         "url": "settings.html",
-        "width": 440,
-        "height": 560,
+        "width": 520,
+        "height": 680,
         "resizable": false,
         "visible": false,
         "center": true

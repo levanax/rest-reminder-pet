@@ -5,6 +5,8 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 
 /// Last snow virtual-desktop fingerprint — skip redundant re-emits.
 static LAST_SNOW_FINGERPRINT: Mutex<String> = Mutex::new(String::new());
+/// Active reminder scene for this session (`snow` | `rainGlass` | `rainStreak` | `blinds`).
+static CURRENT_SCENE: Mutex<String> = Mutex::new(String::new());
 
 #[cfg(windows)]
 fn cursor_pos() -> Option<(i32, i32)> {
@@ -141,15 +143,24 @@ fn snow_layout(app: &AppHandle) -> Result<SnowLayout, String> {
     })
 }
 
+fn current_scene() -> String {
+    CURRENT_SCENE
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_else(|_| "snow".into())
+}
+
 fn emit_snow_active(app: &AppHandle, layout: &SnowLayout) {
     let fp = snow_layout_fingerprint(layout);
     if let Ok(mut prev) = LAST_SNOW_FINGERPRINT.lock() {
         *prev = fp;
     }
+    let scene = current_scene();
     let _ = app.emit(
         "snow-event",
         serde_json::json!({
             "active": true,
+            "scene": scene,
             "window": { "width": layout.width, "height": layout.height },
             "monitors": layout.monitors,
         }),
@@ -208,7 +219,16 @@ pub fn refresh_snow_layout_if_changed(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn show_snow(app: &AppHandle) -> Result<(), String> {
+pub fn show_snow(app: &AppHandle, scene: &str) -> Result<(), String> {
+    let scene = match scene {
+        "rainGlass" => "rainGlass",
+        "rainStreak" => "rainStreak",
+        "blinds" => "blinds",
+        _ => "snow",
+    };
+    if let Ok(mut cur) = CURRENT_SCENE.lock() {
+        *cur = scene.to_string();
+    }
     if let Ok(mut prev) = LAST_SNOW_FINGERPRINT.lock() {
         prev.clear();
     }
@@ -236,6 +256,9 @@ pub fn show_snow(app: &AppHandle) -> Result<(), String> {
 pub fn hide_snow(app: &AppHandle) -> Result<(), String> {
     if let Ok(mut prev) = LAST_SNOW_FINGERPRINT.lock() {
         prev.clear();
+    }
+    if let Ok(mut cur) = CURRENT_SCENE.lock() {
+        cur.clear();
     }
     let _ = app.emit("snow-event", serde_json::json!({ "active": false }));
     if let Some(snow) = app.get_webview_window("snow") {
@@ -301,11 +324,16 @@ pub fn hide_summary(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-pub fn show_settings(app: &AppHandle) -> Result<(), String> {
+pub fn show_settings(app: &AppHandle, tab: &str) -> Result<(), String> {
+    let tab = match tab {
+        "settings" => "settings",
+        _ => "today",
+    };
     let w = app
         .get_webview_window("settings")
         .ok_or_else(|| "找不到 settings 窗口".to_string())?;
     w.show().map_err(|e| e.to_string())?;
     w.set_focus().map_err(|e| e.to_string())?;
+    let _ = app.emit("main-ui-open", serde_json::json!({ "tab": tab }));
     Ok(())
 }

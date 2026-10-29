@@ -11,6 +11,10 @@ node_modules
 dist
 dist-ssr
 *.local
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
 
 # 真实猫动画管线的工作目录与虚拟环境
 work/

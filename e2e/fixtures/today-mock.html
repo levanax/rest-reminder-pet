@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Today mock</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body class="settings-body">
+    <div id="app" class="settings main-shell"></div>
+    <script type="module">
+      import { renderTodayPanel } from "/src/settings/TodayPanel.ts";
+      const root = document.getElementById("app");
+      root.innerHTML = `
+        <h1>Rest Reminder Pet</h1>
+        <div class="tabs">
+          <button type="button" class="tab active" data-tab="today">今日</button>
+          <button type="button" class="tab" data-tab="settings">设置</button>
+        </div>
+        <section class="panel" id="panel-today"></section>
+      `;
+      renderTodayPanel(
+        document.getElementById("panel-today"),
+        {
+          date: "2026-10-28",
+          successCount: 3,
+          incompleteCount: 1,
+          delayTotalSecs: 720,
+          events: [
+            { at: "2026-10-28T10:05:00", outcome: "success", delaySecs: 60 },
+            { at: "2026-10-28T12:10:00", outcome: "incomplete", delaySecs: 480 },
+            { at: "2026-10-28T14:02:00", outcome: "success", delaySecs: 180 },
+            { at: "2026-10-28T16:40:00", outcome: "success", delaySecs: 120 },
+          ],
+        },
+        20,
+      );
+    </script>
+  </body>
+</html>
