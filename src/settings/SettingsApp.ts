@@ -48,6 +48,7 @@ root.innerHTML = `
           <option value="snow">下雪</option>
           <option value="rainGlass">玻璃起雾</option>
           <option value="rainStreak">玻璃下雨</option>
+          <option value="blinds">百叶窗</option>
         </select>
         <span class="sub" style="margin:0">默认随机；每次提醒开始时决定，中途不切换</span>
       </div>

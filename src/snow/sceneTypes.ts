@@ -1,4 +1,4 @@
-export type ReminderScene = "snow" | "rainGlass" | "rainStreak";
+export type ReminderScene = "snow" | "rainGlass" | "rainStreak" | "blinds";
 
 export type MonitorRectPhysical = {
   x: number;
@@ -17,5 +17,6 @@ export type SnowEventPayload = {
 export function normalizeScene(raw?: string): ReminderScene {
   if (raw === "rainGlass") return "rainGlass";
   if (raw === "rainStreak") return "rainStreak";
+  if (raw === "blinds") return "blinds";
   return "snow";
 }

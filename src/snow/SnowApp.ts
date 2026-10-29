@@ -1,5 +1,12 @@
 import { listen } from "@tauri-apps/api/event";
 import {
+  isBlindsRunning,
+  onBlindsResize,
+  setBlindsPaused,
+  startBlinds,
+  stopBlinds,
+} from "./BlindsRenderer";
+import {
   isRainGlassRunning,
   onRainGlassResize,
   setRainGlassPaused,
@@ -28,13 +35,14 @@ const canvas = document.getElementById("snow") as HTMLCanvasElement;
 let activeScene: ReminderScene | null = null;
 
 function anyRunning() {
-  return isSnowRunning() || isRainGlassRunning() || isRainStreakRunning();
+  return isSnowRunning() || isRainGlassRunning() || isRainStreakRunning() || isBlindsRunning();
 }
 
 function stopAll() {
   stopSnow();
   stopRainGlass();
   stopRainStreak();
+  stopBlinds();
   activeScene = null;
 }
 
@@ -44,6 +52,8 @@ function startScene(scene: ReminderScene, payload: SnowEventPayload) {
     startRainGlass(canvas);
   } else if (scene === "rainStreak") {
     startRainStreak(canvas);
+  } else if (scene === "blinds") {
+    startBlinds(canvas);
   } else {
     startSnow(payload);
   }
@@ -56,6 +66,7 @@ async function main() {
     setSnowPaused(held);
     setRainGlassPaused(held);
     setRainStreakPaused(held);
+    setBlindsPaused(held);
   });
 
   await listen<SnowEventPayload>("snow-event", (e) => {
@@ -76,6 +87,7 @@ async function main() {
     onSnowResize();
     onRainGlassResize();
     onRainStreakResize();
+    onBlindsResize();
   });
 }
 

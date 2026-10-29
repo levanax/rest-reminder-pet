@@ -65,7 +65,7 @@ _Avoid_: 偷窥、彩蛋
 _Avoid_: 开场、Splash
 
 **ReminderScene**:
-Reminder 期间覆盖全部显示器的景致层（下雪 Snow 或雨雾玻璃 RainGlass）；点击穿透；配置可为固定或随机；须连续无键鼠达到 ObservationWindow 才结束，否则一直持续。
+Reminder 期间覆盖全部显示器的景致层（下雪 Snow、雨雾玻璃 RainGlass、玻璃下雨 RainStreak、百叶窗 Blinds）；点击穿透；配置可为固定或随机；须连续无键鼠达到 ObservationWindow 才结束，否则一直持续。
 _Avoid_: 天气特效、粒子
 
 **SnowScene**:
@@ -79,3 +79,7 @@ _Avoid_: 滤镜、下雨特效
 **RainStreakScene**:
 ReminderScene 的玻璃下雨子类型；雨滴沿玻璃滑落，由毛毛雨逐渐加大至粗水滴划过。
 _Avoid_: 暴雨粒子、天气模拟
+
+**BlindsScene**:
+ReminderScene 的百叶窗子类型；叶片以打开状态先从顶部放下，短暂停留后缓慢合拢遮光。
+_Avoid_: 窗帘、卷帘、滤镜

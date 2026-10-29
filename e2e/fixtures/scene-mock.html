@@ -12,6 +12,7 @@
   <body>
     <canvas id="snow"></canvas>
     <script type="module">
+      import { startBlinds } from "/src/snow/BlindsRenderer.ts";
       import { startRainGlass } from "/src/snow/RainGlassRenderer.ts";
       import { startRainStreak } from "/src/snow/RainStreakRenderer.ts";
       import { startSnow } from "/src/snow/SnowRenderer.ts";
@@ -25,6 +26,9 @@
       } else if (scene === "rainStreak") {
         startRainStreak(canvas);
         window.__scene = "rainStreak";
+      } else if (scene === "blinds") {
+        startBlinds(canvas);
+        window.__scene = "blinds";
       } else {
         startSnow({
           active: true,

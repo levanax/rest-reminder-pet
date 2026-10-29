@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview
 
 /// Last snow virtual-desktop fingerprint — skip redundant re-emits.
 static LAST_SNOW_FINGERPRINT: Mutex<String> = Mutex::new(String::new());
-/// Active reminder scene for this session (`snow` | `rainGlass` | `rainStreak`).
+/// Active reminder scene for this session (`snow` | `rainGlass` | `rainStreak` | `blinds`).
 static CURRENT_SCENE: Mutex<String> = Mutex::new(String::new());
 
 #[cfg(windows)]
@@ -223,6 +223,7 @@ pub fn show_snow(app: &AppHandle, scene: &str) -> Result<(), String> {
     let scene = match scene {
         "rainGlass" => "rainGlass",
         "rainStreak" => "rainStreak",
+        "blinds" => "blinds",
         _ => "snow",
     };
     if let Ok(mut cur) = CURRENT_SCENE.lock() {
