@@ -11,8 +11,9 @@ use config::{load_config, normalize_reminder_scene, save_config, AppConfig};
 use daily_stats::{DailyRestStats, SummaryPayload};
 use input_hook::start_input_hook;
 use overlay::{
-    hide_pet, hide_snow, hide_summary, refresh_snow_layout, refresh_snow_layout_if_changed,
-    show_pet, show_settings, show_snow, show_summary,
+    hide_desktop_pet, hide_snow, hide_summary, refresh_snow_layout, refresh_snow_layout_if_changed,
+    set_desktop_pet_position, show_desktop_pet, show_settings, show_snow, show_summary,
+    snap_desktop_pet,
 };
 use session_lock::start_session_watch;
 use std::sync::{Arc, Mutex};
@@ -30,6 +31,8 @@ struct AppState {
     timer: Arc<Mutex<TimerState>>,
     stats: Mutex<DailyRestStats>,
     was_paused_before_reminder: Mutex<bool>,
+    /// User enabled desktop pet, but memory guard forced it off until re-enabled.
+    desktop_pet_forced_off: Mutex<bool>,
 }
 
 pub(crate) fn apply_session_hold(app: &AppHandle, reason: HoldReason, active: bool) {
@@ -52,69 +55,9 @@ fn emit_pet(app: &AppHandle, event: &PetEvent) {
 }
 
 fn do_pause(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    let was_sneak = {
-        let timer = state.timer.lock().map_err(|e| e.to_string())?;
-        timer.phase == Phase::SneakPeek
-    };
-    {
-        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
-        timer.pause();
-    }
-    if was_sneak {
-        hide_pet(app)?;
-        let timer = state.timer.lock().map_err(|e| e.to_string())?;
-        emit_pet(app, &timer.to_event(None));
-    }
-    Ok(())
-}
-
-fn begin_boot_intro(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    {
-        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
-        if timer.phase != Phase::BootIntro {
-            return Ok(());
-        }
-        timer.start_boot_intro();
-        let ev = timer.to_event(Some("jumpUp"));
-        emit_pet(app, &ev);
-    }
-    show_pet(app)?;
-    Ok(())
-}
-
-fn end_boot_intro(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    {
-        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
-        timer.end_boot_intro();
-        let ev = timer.to_event(None);
-        emit_pet(app, &ev);
-    }
-    hide_pet(app)?;
-    Ok(())
-}
-
-fn begin_sneak_peek(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    {
-        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
-        if timer.phase != Phase::Working {
-            return Ok(());
-        }
-        timer.start_sneak_peek();
-        let ev = timer.to_event(Some("sneakPeek"));
-        emit_pet(app, &ev);
-    }
-    show_pet(app)?;
-    Ok(())
-}
-
-fn end_sneak_peek(app: &AppHandle, state: &AppState) -> Result<(), String> {
-    {
-        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
-        timer.end_sneak_peek();
-        let ev = timer.to_event(None);
-        emit_pet(app, &ev);
-    }
-    hide_pet(app)?;
+    let _ = app;
+    let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
+    timer.pause();
     Ok(())
 }
 
@@ -124,48 +67,63 @@ fn resolve_reminder_scene(pref: &str) -> String {
         "rainGlass" => "rainGlass".into(),
         "rainStreak" => "rainStreak".into(),
         "blinds" => "blinds".into(),
+        "waterFlow" => "waterFlow".into(),
         _ => {
-            // random among four scenes
             let n = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.subsec_nanos())
                 .unwrap_or(0);
-            match n % 4 {
+            match n % 5 {
                 0 => "snow".into(),
                 1 => "rainGlass".into(),
                 2 => "rainStreak".into(),
-                _ => "blinds".into(),
+                3 => "blinds".into(),
+                _ => "waterFlow".into(),
             }
         }
     }
 }
 
 fn begin_reminder(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let was_paused = {
+        let timer = state.timer.lock().map_err(|e| e.to_string())?;
+        timer.phase == Phase::Paused
+    };
+    *state
+        .was_paused_before_reminder
+        .lock()
+        .map_err(|e| e.to_string())? = was_paused;
+
+    // 允许在已提醒时再次调用（立即提醒）：先回到 Reminding 并重铺景致。
+    // 景致成功前不进入 Observing，避免「状态已是观察中但全屏层失败」后永远不再提醒。
     {
         let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
-        if matches!(
-            timer.phase,
-            Phase::Reminding | Phase::Observing | Phase::HappyExit | Phase::FallExit
-        ) {
-            return Ok(());
-        }
-        *state
-            .was_paused_before_reminder
-            .lock()
-            .map_err(|e| e.to_string())? = timer.phase == Phase::Paused;
-        // 打断开机入场 / 偷瞧，直接进入正式提醒
         timer.start_reminding();
-        let ev = timer.to_event(Some("crawl"));
+        let ev = timer.to_event(None);
         emit_pet(app, &ev);
     }
+
     let scene = resolve_reminder_scene(&load_config().reminder_scene);
-    // 先小猫、再全屏景致：一直持续到休息成功或手动「知道了」
-    show_pet(app)?;
-    show_snow(app, &scene)?;
+    if let Err(err) = show_snow(app, &scene) {
+        eprintln!("show_snow failed: {err}");
+        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
+        timer.dismiss_to_working(was_paused);
+        let ev = timer.to_event(None);
+        emit_pet(app, &ev);
+        return Err(err);
+    }
+
+    {
+        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
+        if timer.phase == Phase::Reminding {
+            timer.enter_observing();
+            let ev = timer.to_event(None);
+            emit_pet(app, &ev);
+        }
+    }
     Ok(())
 }
 
-/// 结束提醒：小猫退场并停雪（仅休息成功或托盘「知道了」）。
 fn finish_exit(app: &AppHandle, state: &AppState) -> Result<(), String> {
     {
         let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
@@ -184,8 +142,37 @@ fn finish_exit(app: &AppHandle, state: &AppState) -> Result<(), String> {
         let ev = timer.to_event(None);
         emit_pet(app, &ev);
     }
-    hide_pet(app)?;
     hide_snow(app)?;
+    Ok(())
+}
+
+fn complete_happy_exit(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let payload = {
+        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
+        let delay_secs = timer.claim_success_delay();
+        drop(timer);
+        if let Some(secs) = delay_secs {
+            let mut stats = state.stats.lock().map_err(|e| e.to_string())?;
+            Some(stats.record_success(secs))
+        } else {
+            None
+        }
+    };
+    let was_paused = *state
+        .was_paused_before_reminder
+        .lock()
+        .map_err(|e| e.to_string())?;
+    {
+        let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
+        // claim_success_delay already cleared reminder_active
+        timer.dismiss_to_working(was_paused);
+        let ev = timer.to_event(None);
+        emit_pet(app, &ev);
+    }
+    hide_snow(app)?;
+    if let Some(payload) = payload {
+        present_summary(app, &payload)?;
+    }
     Ok(())
 }
 
@@ -194,6 +181,80 @@ fn present_summary(app: &AppHandle, payload: &SummaryPayload) -> Result<(), Stri
         let _ = window.emit("summary-event", payload);
     }
     show_summary(app)
+}
+
+fn apply_desktop_pet_visibility(app: &AppHandle, state: &AppState) -> Result<(), String> {
+    let cfg = load_config();
+    let forced = *state
+        .desktop_pet_forced_off
+        .lock()
+        .map_err(|e| e.to_string())?;
+    if cfg.desktop_pet_enabled && !forced {
+        show_desktop_pet(app)
+    } else {
+        hide_desktop_pet(app)
+    }
+}
+
+fn system_memory_percent() -> Option<f32> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::{
+            GlobalMemoryStatusEx, MEMORYSTATUSEX,
+        };
+        unsafe {
+            let mut status = MEMORYSTATUSEX {
+                dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+                ..Default::default()
+            };
+            if GlobalMemoryStatusEx(&mut status).is_ok() {
+                return Some(status.dwMemoryLoad as f32);
+            }
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+fn start_memory_guard(app: AppHandle) {
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(5));
+        let cfg = load_config();
+        if !cfg.desktop_pet_memory_guard || !cfg.desktop_pet_enabled {
+            continue;
+        }
+        let Some(pct) = system_memory_percent() else {
+            continue;
+        };
+        if pct < cfg.desktop_pet_memory_threshold as f32 {
+            continue;
+        }
+        let Some(state) = app.try_state::<AppState>() else {
+            continue;
+        };
+        {
+            let Ok(mut forced) = state.desktop_pet_forced_off.lock() else {
+                continue;
+            };
+            if *forced {
+                continue;
+            }
+            *forced = true;
+        }
+        let _ = hide_desktop_pet(&app);
+        let _ = app.emit(
+            "desktop-pet-memory-closed",
+            serde_json::json!({ "memoryPercent": pct }),
+        );
+        // Persist disabled so restart also respects forced-off until user re-enables
+        let mut next = cfg;
+        next.desktop_pet_enabled = false;
+        let _ = save_config(&next);
+        let _ = app.emit("config-changed", &next);
+    });
 }
 
 #[tauri::command]
@@ -212,13 +273,16 @@ fn save_app_config(app: AppHandle, state: State<AppState>, cfg: AppConfig) -> Re
     cfg.work_minutes = cfg.work_minutes.clamp(1, 180);
     cfg.observation_seconds = cfg.observation_seconds.clamp(10, 120);
     cfg.display_max_px = cfg.display_max_px.clamp(48, 192);
+    cfg.desktop_pet_memory_threshold = cfg.desktop_pet_memory_threshold.clamp(50, 99);
     let existing = load_config();
-    // Settings UI does not edit snow duration; keep whatever is already on disk
     cfg.snow_seconds = existing.snow_seconds.clamp(30, 600);
     if cfg.reminder_scene.is_empty() {
         cfg.reminder_scene = existing.reminder_scene;
     }
     cfg.reminder_scene = normalize_reminder_scene(&cfg.reminder_scene);
+    if cfg.character_pack.is_empty() {
+        cfg.character_pack = existing.character_pack;
+    }
     if cfg
         .wanxiang
         .endpoint
@@ -240,7 +304,14 @@ fn save_app_config(app: AppHandle, state: State<AppState>, cfg: AppConfig) -> Re
             cfg.character_pack.clone(),
         );
     }
+    if cfg.desktop_pet_enabled {
+        *state
+            .desktop_pet_forced_off
+            .lock()
+            .map_err(|e| e.to_string())? = false;
+    }
     let _ = sync_autostart(&app, cfg.autostart);
+    apply_desktop_pet_visibility(&app, &state)?;
     let _ = app.emit("config-changed", &cfg);
     Ok(())
 }
@@ -289,51 +360,11 @@ fn remind_now(app: AppHandle, state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn notify_action_done(
-    app: AppHandle,
-    state: State<AppState>,
-    action: String,
+    _app: AppHandle,
+    _state: State<AppState>,
+    _action: String,
 ) -> Result<(), String> {
-    let mut timer = state.timer.lock().map_err(|e| e.to_string())?;
-    match (timer.phase, action.as_str()) {
-        (Phase::BootIntro, "jumpUp") => {
-            drop(timer);
-            end_boot_intro(&app, &state)?;
-        }
-        (Phase::SneakPeek, "sneakPeek") => {
-            drop(timer);
-            end_sneak_peek(&app, &state)?;
-        }
-        (Phase::Reminding, "crawl") => {
-            let ev = timer.to_event(Some("anxiousHop"));
-            drop(timer);
-            emit_pet(&app, &ev);
-        }
-        (Phase::Reminding, "anxiousHop") => {
-            timer.enter_observing();
-            let ev = timer.to_event(Some("anxiousHop"));
-            emit_pet(&app, &ev);
-        }
-        (Phase::HappyExit, _) => {
-            let delay_secs = timer.claim_success_delay();
-            drop(timer);
-            let payload = if let Some(secs) = delay_secs {
-                let mut stats = state.stats.lock().map_err(|e| e.to_string())?;
-                Some(stats.record_success(secs))
-            } else {
-                None
-            };
-            // 连续空闲达标 → 休息成功，停雪并重置工作计时
-            finish_exit(&app, &state)?;
-            if let Some(payload) = payload {
-                present_summary(&app, &payload)?;
-            }
-        }
-        (Phase::FallExit, _) => {
-            // 保留兼容：不再因活动掉落结束提醒
-            drop(timer);
-        }
-        _ => {}
-    }
+    // Character actions removed; kept for API compatibility
     Ok(())
 }
 
@@ -361,6 +392,25 @@ fn open_main_ui(app: AppHandle, tab: Option<String>) -> Result<(), String> {
     show_settings(&app, &tab)
 }
 
+#[tauri::command]
+fn set_pet_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+    set_desktop_pet_position(&app, x, y)
+}
+
+#[tauri::command]
+fn snap_pet(app: AppHandle) -> Result<serde_json::Value, String> {
+    snap_desktop_pet(&app)
+}
+
+#[tauri::command]
+fn get_pet_screen_pos(app: AppHandle) -> Result<serde_json::Value, String> {
+    let pet = app
+        .get_webview_window("pet")
+        .ok_or_else(|| "找不到 pet 窗口".to_string())?;
+    let pos = pet.outer_position().map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({ "x": pos.x, "y": pos.y }))
+}
+
 fn sync_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
     use tauri_plugin_autostart::ManagerExt;
     let manager = app.autolaunch();
@@ -373,7 +423,7 @@ fn sync_autostart(app: &AppHandle, enabled: bool) -> Result<(), String> {
 }
 
 fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show_settings_i = MenuItem::with_id(app, "settings", "打开设置", true, None::<&str>)?;
+    let show_settings_i = MenuItem::with_id(app, "settings", "打开主界面", true, None::<&str>)?;
     let pause_i = MenuItem::with_id(app, "pause", "暂停计时", true, None::<&str>)?;
     let resume_i = MenuItem::with_id(app, "resume", "继续计时", true, None::<&str>)?;
     let remind_i = MenuItem::with_id(app, "remind", "立即提醒", true, None::<&str>)?;
@@ -450,27 +500,33 @@ fn start_tick_loop(app: AppHandle, state_timer: Arc<Mutex<TimerState>>) {
             match transition {
                 Some(PhaseTransition::EnterReminding) => {
                     if let Some(state) = app.try_state::<AppState>() {
-                        let _ = begin_reminder(&app, state.inner());
+                        if let Err(err) = begin_reminder(&app, state.inner()) {
+                            eprintln!("begin_reminder failed: {err}");
+                        }
                     }
                 }
-                Some(PhaseTransition::EnterSneakPeek) => {
+                Some(PhaseTransition::EnterObserving) => {
                     if let Some(state) = app.try_state::<AppState>() {
-                        let _ = begin_sneak_peek(&app, state.inner());
+                        if let Ok(mut timer) = state.timer.lock() {
+                            if timer.phase == Phase::Reminding {
+                                timer.enter_observing();
+                                let ev = timer.to_event(None);
+                                drop(timer);
+                                emit_pet(&app, &ev);
+                            }
+                        }
                     }
                 }
                 Some(PhaseTransition::EnterHappyExit) => {
-                    let ev = {
-                        let Ok(timer) = state_timer.lock() else {
-                            continue;
-                        };
-                        timer.to_event(Some("happyClimb"))
-                    };
-                    emit_pet(&app, &ev);
+                    if let Some(state) = app.try_state::<AppState>() {
+                        if let Err(err) = complete_happy_exit(&app, state.inner()) {
+                            eprintln!("complete_happy_exit failed: {err}");
+                        }
+                    }
                 }
                 None => {}
             }
 
-            // ~1s: RDP / 分辨率变化时重铺雪层，避免积雪底边漂在半空
             display_check_ticks = display_check_ticks.wrapping_add(1);
             if display_check_ticks % 4 == 0 {
                 let _ = refresh_snow_layout_if_changed(&app);
@@ -499,6 +555,7 @@ pub fn run() {
             timer: Arc::clone(&timer),
             stats: Mutex::new(DailyRestStats::load()),
             was_paused_before_reminder: Mutex::new(false),
+            desktop_pet_forced_off: Mutex::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             get_config,
@@ -515,7 +572,10 @@ pub fn run() {
             get_status,
             refresh_snow_layout_cmd,
             get_daily_stats,
-            open_main_ui
+            open_main_ui,
+            set_pet_position,
+            snap_pet,
+            get_pet_screen_pos
         ])
         .setup(move |app| {
             let resource_dir = app
@@ -526,13 +586,9 @@ pub fn run() {
 
             setup_tray(app.handle())?;
 
-            if let Some(pet) = app.get_webview_window("pet") {
-                let _ = pet.set_ignore_cursor_events(true);
-            }
             if let Some(snow) = app.get_webview_window("snow") {
                 let _ = snow.set_ignore_cursor_events(true);
             }
-            // 点关闭只隐藏，避免窗口被销毁后无法再打开设置
             if let Some(summary) = app.get_webview_window("summary") {
                 let summary_hide = summary.clone();
                 summary.on_window_event(move |event| {
@@ -542,15 +598,7 @@ pub fn run() {
                     }
                 });
             }
-            if let Some(settings) = app.get_webview_window("settings") {
-                let settings_hide = settings.clone();
-                settings.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = settings_hide.hide();
-                    }
-                });
-            }
+            // settings: allow destroy on close; recreated by show_settings
 
             let cfg = load_config();
             let _ = sync_autostart(app.handle(), cfg.autostart);
@@ -558,25 +606,24 @@ pub fn run() {
             start_input_hook(app.handle().clone(), Arc::clone(&timer));
             start_session_watch(app.handle().clone());
             start_tick_loop(app.handle().clone(), Arc::clone(&timer));
+            start_memory_guard(app.handle().clone());
 
-            // 等前端挂好事件监听后再播开机入场
-            let boot_app = app.handle().clone();
+            if let Some(state) = app.try_state::<AppState>() {
+                let _ = apply_desktop_pet_visibility(app.handle(), state.inner());
+            }
+
             let demo = std::env::var("REST_REMINDER_DEMO")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false);
-            thread::spawn(move || {
-                thread::sleep(Duration::from_millis(600));
-                if let Some(state) = boot_app.try_state::<AppState>() {
-                    let _ = begin_boot_intro(&boot_app, state.inner());
-                }
-                // 预览模式：入场结束后自动触发休息提醒（飘雪 + 小猫）
-                if demo {
-                    thread::sleep(Duration::from_millis(2800));
-                    if let Some(state) = boot_app.try_state::<AppState>() {
-                        let _ = begin_reminder(&boot_app, state.inner());
+            if demo {
+                let demo_app = app.handle().clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(800));
+                    if let Some(state) = demo_app.try_state::<AppState>() {
+                        let _ = begin_reminder(&demo_app, state.inner());
                     }
-                }
-            });
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

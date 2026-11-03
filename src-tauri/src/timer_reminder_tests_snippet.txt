@@ -1,0 +1,43 @@
+#[cfg(test)]
+mod reminder_flow_tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn working_reaches_reminding_transition() {
+        let mut t = TimerState::new(1, 30, "default".into());
+        // simulate almost done: set work_elapsed high by flushing after short wait with fake deadline
+        t.work_minutes = 1;
+        // Force elapsed by manipulating: pause path flush
+        t.work_elapsed = Duration::from_secs(60);
+        t.segment_started = None;
+        t.phase = Phase::Working;
+        let tr = t.tick();
+        assert!(matches!(tr, Some(PhaseTransition::EnterReminding)), "got {:?}", tr);
+    }
+
+    #[test]
+    fn observing_completes_after_idle() {
+        let mut t = TimerState::new(20, 1, "default".into());
+        t.start_reminding();
+        t.enter_observing();
+        assert_eq!(t.phase, Phase::Observing);
+        thread::sleep(Duration::from_millis(1100));
+        let tr = t.tick();
+        assert!(matches!(tr, Some(PhaseTransition::EnterHappyExit)), "got {:?}", tr);
+        assert_eq!(t.phase, Phase::HappyExit);
+    }
+
+    #[test]
+    fn activity_resets_observation() {
+        let mut t = TimerState::new(20, 2, "default".into());
+        t.start_reminding();
+        t.enter_observing();
+        thread::sleep(Duration::from_millis(800));
+        t.note_activity();
+        let tr = t.tick();
+        assert!(tr.is_none());
+        assert_eq!(t.phase, Phase::Observing);
+    }
+}

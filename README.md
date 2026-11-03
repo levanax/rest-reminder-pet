@@ -1,6 +1,6 @@
 # Rest Reminder Pet
 
-Win11 桌面休息提醒桌宠：启动时小猫从桌面底部跳上屏顶；到点后从顶部爬下往下看，并在**所有屏幕**展示提醒景致（下雪 / 玻璃起雾 / 玻璃下雨 / 百叶窗，设置里可选，默认随机）。须**连续无键鼠**达到观察秒数才算休息成功并结束景致；有操作会重新计时，景致不停。未到休息点时，也会偶尔从屏顶偷偷探头往下看一眼再缩回。主窗口默认「今日」统计（棒棒糖时间轴 + 记录），第二 Tab 为设置。
+Win11 桌面休息提醒：工作一段时间后在**所有屏幕**展示提醒景致（下雪 / 玻璃起雾 / 玻璃下雨 / 百叶窗 / 水帘，设置里可选，默认随机）。须**连续无键鼠**达到观察秒数才算休息成功并结束景致；有操作会重新计时，景致不停。可选常驻桌宠浮窗（可拖动、可贴边偷看），设置可开关；系统内存过高时可自动关闭桌宠。主窗口默认「今日」统计，关闭即销毁以省内存，可从托盘再开。
 
 ## 环境要求
 
@@ -14,13 +14,12 @@ Win11 桌面休息提醒桌宠：启动时小猫从桌面底部跳上屏顶；�
 ```bash
 cd rest-reminder-pet
 npm install
-npm run gen-sprites
 npm run tauri dev
 ```
 
 ### 一键预览真实效果
 
-启动后会先播开机跳跃，约 3 秒后**自动触发休息提醒**（全屏飘雪 + 小猫爬下）：
+启动后约 1 秒自动触发休息提醒（全屏景致）：
 
 ```bash
 npm run demo
@@ -32,53 +31,29 @@ npm run demo
 scripts\preview-demo.cmd
 ```
 
-预览时：须连续静止约 30 秒才爬回并停雪；乱动会重新计时、雪不停。托盘点「知道了」可立刻结束。`Ctrl+C` 退出进程。
+预览时：须连续静止约 30 秒才结束景致；乱动会重新计时。托盘点「知道了」可立刻结束。`Ctrl+C` 退出进程。
 
 启动后看系统托盘图标：
 
-- 左键：打开主窗口「今日」Tab（当日 KPI、时间轴、记录）
-- 「打开设置」：同一主窗口切到设置（工作时长、观察秒数、提醒景致、形象包、自启、API Key）
-- 「立即提醒」：立刻测试动画（无需等满时长）
+- 左键：打开主窗口「今日」Tab
+- 「打开主界面」：同一窗口切到设置（工作时长、观察秒数、提醒景致、桌宠、内存守卫、自启、API Key）
+- 「立即提醒」：立刻测试景致
 - 「暂停计时」/「继续计时」
 - 「知道了」：结束当前提醒并重置计时（记为当日未完成，不出休息总结）
-- 休息成功后：主屏右下角短暂显示当日休息总结（成功/提醒次数、本次与累计拖延）
+- 休息成功后：主屏右下角短暂显示当日休息总结
 - 「退出」
 
 ## 配置位置
 
 `%APPDATA%\rest-reminder-pet\config.json`
 
-形象包目录：`%APPDATA%\rest-reminder-pet\characters\`
-
-## AI 生成形象包（阿里云万相）
-
-1. 在设置中填写 API Key，或设置环境变量 `DASHSCOPE_API_KEY`
-2. 构建后运行 CLI（开发时可用 cargo）：
-
-```bash
-cd src-tauri
-cargo run --bin rest-reminder-gen -- --name my-cat --prompt "blue-gray cartoon cat"
-```
-
-生成 12 帧 PNG + `manifest.json` 到 AppData 的 `characters\<name>\`，然后在设置里选择该形象包。
-
 ## 领域文档
 
 - [CONTEXT.md](./CONTEXT.md)
 - [ADR](./docs/adr/)
 
-## 默认形象来源
-
-内置 `default` 由用户提供的猫咪照片裁剪加工而成（椭圆抠图 + 假动效帧）：
-
-- 源图：`src-tauri/characters/default-source/cat-source.jpg`
-- 预览 GIF：`src-tauri/characters/default-source/previews/*.gif`
-- 说明见 `src-tauri/characters/default-source/ATTRIBUTION.md`
-
 ## 脚本
 
-- `npm run gen-sprites`：用源照片重新生成内置 `default` 形象帧与预览 GIF（需 Python + Pillow；不再覆盖应用图标）
-- `npm run gen-icon-source`：生成黑底白猫剪影 `icon.png`（需 Pillow）
+- `npm run gen-icon-source`：生成图标源图（需 Pillow）
 - `npm run gen-icons`：用 `src-tauri/icons/icon.png` 生成全套平台图标（Tauri CLI）
-- `npm run test:e2e`：Playwright 视觉用例（截图 + video → `test-results/`）
 - `npm run tauri build`：打 Windows 安装包

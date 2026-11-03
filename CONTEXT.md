@@ -1,6 +1,6 @@
 # Rest Reminder Pet
 
-Win11 桌面休息提醒上下文：在工作一段时间后，用桌宠形象提醒用户休息，并根据是否停止键鼠操作给出不同退场。
+Win11 桌面休息提醒：工作一段时间后用全屏景致提醒休息，并根据是否停止键鼠操作给出不同退场；可选常驻桌宠浮窗。
 
 ## Language
 
@@ -9,11 +9,11 @@ Win11 桌面休息提醒上下文：在工作一段时间后，用桌宠形象�
 _Avoid_: Timer（泛指）、番茄钟
 
 **Reminder**:
-工作时长到点后出现的休息提醒过程，包含桌宠爬下与往下看。
+工作时长到点后出现的休息提醒过程；现仅展示 ReminderScene，不再播放角色爬下动画。
 _Avoid_: 通知、弹窗、Toast
 
 **ObservationWindow**:
-Reminder 展示完成后的观察时段；须连续无 Activity 达到设定秒数才进入 HappyExit。期间出现 Activity 只重置连续空闲，不结束 Reminder。
+Reminder 展示后的观察时段；须连续无 Activity 达到设定秒数才进入 HappyExit。期间出现 Activity 只重置连续空闲，不结束 Reminder。
 _Avoid_: 冷却、宽限期
 
 **FallExit**:
@@ -37,35 +37,23 @@ HappyExit 之后在主显示器右下角短暂出现的休息总结，展示当�
 _Avoid_: 通知、弹窗、Toast
 
 **MainWindow**:
-托盘打开的主界面：默认「今日」Tab（KPI + 棒棒糖时间轴 + 事件列表），第二 Tab「设置」。
+托盘打开的主界面：默认「今日」Tab（KPI + 棒棒糖时间轴 + 事件列表），第二 Tab「设置」。关闭时销毁以节省内存，可从托盘再次创建。
 _Avoid_: 仪表盘
 
 **SessionLock**:
-锁屏或睡眠期间，WorkSession、ObservationWindow、RestDelay、桌宠动作与 SnowScene 全部暂停的时段；解除后从暂停处继续。用户手动暂停仍优先。
+锁屏或睡眠期间，WorkSession、ObservationWindow、RestDelay 与 ReminderScene 全部暂停的时段；解除后从暂停处继续。用户手动暂停仍优先。
 _Avoid_: 空闲、Away
 
 **Activity**:
 观察期内被认定为「仍在操作」的输入：键盘按下、鼠标移动、鼠标按键、滚轮。
 _Avoid_: 事件、输入（过宽）
 
-**CharacterPack**:
-一套带 manifest 与动作帧的桌宠形象资源包。
-_Avoid_: 皮肤、主题、素材包
-
-**PetOverlay**:
-覆盖在目标显示器上的透明置顶桌宠层，用于播放形象动作；默认点击穿透。
-_Avoid_: 窗口、HUD
-
-**SneakPeek**:
-WorkSession 尚未到点时，桌宠偶尔从屏顶探头往下看再缩回的轻量出场；不计为 Reminder，不进入 ObservationWindow。
-_Avoid_: 偷窥、彩蛋
-
-**BootIntro**:
-程序启动时桌宠从桌面底部跳上屏顶再消失的入场；结束后才开始累计 WorkSession。
-_Avoid_: 开场、Splash
+**DesktopPet**:
+可拖动的常驻小浮窗；可贴边并以偷看姿态朝向屏幕中央；设置可开关；内存占用过高时可自动关闭。
+_Avoid_: 猫咪形象、CharacterPack 动画
 
 **ReminderScene**:
-Reminder 期间覆盖全部显示器的景致层（下雪 Snow、雨雾玻璃 RainGlass、玻璃下雨 RainStreak、百叶窗 Blinds）；点击穿透；配置可为固定或随机；须连续无键鼠达到 ObservationWindow 才结束，否则一直持续。
+Reminder 期间覆盖全部显示器的景致层（下雪 Snow、雨雾玻璃 RainGlass、玻璃下雨 RainStreak、百叶窗 Blinds、水帘 WaterFlow）；点击穿透；配置可为固定或随机；须连续无键鼠达到 ObservationWindow 才结束，否则一直持续。
 _Avoid_: 天气特效、粒子
 
 **SnowScene**:
@@ -83,3 +71,7 @@ _Avoid_: 暴雨粒子、天气模拟
 **BlindsScene**:
 ReminderScene 的百叶窗子类型；叶片以打开状态先从顶部放下，短暂停留后缓慢合拢遮光。
 _Avoid_: 窗帘、卷帘、滤镜
+
+**WaterFlowScene**:
+ReminderScene 的水帘子类型；自屏幕顶缘流下的水流由细到粗、由少到多。
+_Avoid_: 瀑布滤镜、下雨特效
