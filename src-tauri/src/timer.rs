@@ -1,13 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {
-    BootIntro,
     Working,
     Paused,
-    SneakPeek,
     Reminding,
     Observing,
     HappyExit,
@@ -38,7 +36,6 @@ pub struct TimerState {
     pub observation_started: Option<Instant>,
     pub observation_banked: Duration,
     pub last_activity: Option<Instant>,
-    pub next_sneak_at: Instant,
     /// 当前 Reminder 尚未记账（成功或未完成）。
     pub reminder_active: bool,
     pub delay_accumulated: Duration,
@@ -49,29 +46,18 @@ pub struct TimerState {
     pub hold_sleep: bool,
 }
 
-fn random_range_secs(min: u64, max: u64) -> u64 {
-    let span = max.saturating_sub(min).saturating_add(1);
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos() as u64)
-        .unwrap_or(1);
-    min + (nanos % span)
-}
-
 impl TimerState {
     pub fn new(work_minutes: u32, observation_seconds: u32, character_pack: String) -> Self {
         Self {
-            phase: Phase::BootIntro,
+            phase: Phase::Working,
             work_minutes,
             observation_seconds,
             character_pack,
             work_elapsed: Duration::ZERO,
-            // 入场动画结束再开始累计工作时间
-            segment_started: None,
+            segment_started: Some(Instant::now()),
             observation_started: None,
             observation_banked: Duration::ZERO,
             last_activity: None,
-            next_sneak_at: Instant::now() + Duration::from_secs(3600),
             reminder_active: false,
             delay_accumulated: Duration::ZERO,
             delay_running_since: None,
@@ -145,7 +131,7 @@ impl TimerState {
     }
 
     fn freeze_for_hold(&mut self) {
-        if matches!(self.phase, Phase::Working | Phase::SneakPeek) {
+        if self.phase == Phase::Working {
             self.flush_work();
             self.segment_started = None;
             self.resume_work_on_unlock = true;
@@ -158,14 +144,10 @@ impl TimerState {
 
     fn thaw_after_hold(&mut self) {
         let now = Instant::now();
-        if self.resume_work_on_unlock && matches!(self.phase, Phase::Working | Phase::SneakPeek) {
+        if self.resume_work_on_unlock && self.phase == Phase::Working {
             self.segment_started = Some(now);
             self.resume_work_on_unlock = false;
         }
-        if self.phase == Phase::Working && now >= self.next_sneak_at {
-            self.schedule_next_sneak();
-        }
-        // 拖延只在尚未进入休息时累计；观察期本身是休息，解锁后不恢复拖延钟
         if self.phase == Phase::Reminding && self.reminder_active {
             self.delay_running_since = Some(now);
         }
@@ -196,31 +178,6 @@ impl TimerState {
         Some(secs)
     }
 
-    pub fn start_boot_intro(&mut self) {
-        self.phase = Phase::BootIntro;
-        self.segment_started = None;
-    }
-
-    pub fn end_boot_intro(&mut self) {
-        if self.phase != Phase::BootIntro {
-            return;
-        }
-        self.phase = Phase::Working;
-        self.work_elapsed = Duration::ZERO;
-        if self.session_held() {
-            self.segment_started = None;
-            self.resume_work_on_unlock = true;
-        } else {
-            self.segment_started = Some(Instant::now());
-            self.resume_work_on_unlock = false;
-        }
-        self.schedule_next_sneak();
-    }
-
-    pub fn schedule_next_sneak(&mut self) {
-        self.next_sneak_at = Instant::now() + Duration::from_secs(random_range_secs(90, 240));
-    }
-
     pub fn apply_config(&mut self, work_minutes: u32, observation_seconds: u32, pack: String) {
         self.work_minutes = work_minutes;
         self.observation_seconds = observation_seconds;
@@ -228,7 +185,7 @@ impl TimerState {
     }
 
     fn flush_work(&mut self) {
-        if matches!(self.phase, Phase::Working | Phase::SneakPeek) {
+        if self.phase == Phase::Working {
             if let Some(start) = self.segment_started.take() {
                 self.work_elapsed += start.elapsed();
             }
@@ -236,11 +193,10 @@ impl TimerState {
     }
 
     pub fn pause(&mut self) {
-        if matches!(self.phase, Phase::Working | Phase::SneakPeek) {
+        if self.phase == Phase::Working {
             self.flush_work();
             self.phase = Phase::Paused;
             self.resume_work_on_unlock = false;
-            self.schedule_next_sneak();
         }
     }
 
@@ -275,21 +231,6 @@ impl TimerState {
         } else {
             self.segment_started = Some(Instant::now());
             self.resume_work_on_unlock = false;
-        }
-        self.schedule_next_sneak();
-    }
-
-    pub fn start_sneak_peek(&mut self) {
-        if self.phase != Phase::Working {
-            return;
-        }
-        self.phase = Phase::SneakPeek;
-    }
-
-    pub fn end_sneak_peek(&mut self) {
-        if self.phase == Phase::SneakPeek {
-            self.phase = Phase::Working;
-            self.schedule_next_sneak();
         }
     }
 
@@ -343,17 +284,12 @@ impl TimerState {
 
     pub fn current_work_elapsed(&self) -> Duration {
         let mut total = self.work_elapsed;
-        if matches!(self.phase, Phase::Working | Phase::SneakPeek) {
+        if self.phase == Phase::Working {
             if let Some(start) = self.segment_started {
                 total += start.elapsed();
             }
         }
         total
-    }
-
-    fn remaining_work(&self) -> Duration {
-        self.work_deadline()
-            .saturating_sub(self.current_work_elapsed())
     }
 
     pub fn tick(&mut self) -> Option<PhaseTransition> {
@@ -365,20 +301,17 @@ impl TimerState {
                 if self.current_work_elapsed() >= self.work_deadline() {
                     return Some(PhaseTransition::EnterReminding);
                 }
-                // 距正式提醒不足 45 秒时不再偷偷看，避免抢戏
-                if Instant::now() >= self.next_sneak_at
-                    && self.remaining_work() > Duration::from_secs(45)
-                {
-                    return Some(PhaseTransition::EnterSneakPeek);
-                }
             }
-            Phase::SneakPeek => {
-                if self.current_work_elapsed() >= self.work_deadline() {
-                    return Some(PhaseTransition::EnterReminding);
+            // 无桌宠回调后 Reminding 不应长时间停留；卡住则推进观察期
+            Phase::Reminding => {
+                if self.delay_running_since
+                    .map(|t| t.elapsed() >= Duration::from_secs(2))
+                    .unwrap_or(true)
+                {
+                    return Some(PhaseTransition::EnterObserving);
                 }
             }
             Phase::Observing => {
-                // 只有连续 observation_seconds 无键鼠才算休息成功；有活动只重置计时，不结束飘雪
                 if self.current_observation()
                     >= Duration::from_secs(self.observation_seconds as u64)
                 {
@@ -404,6 +337,40 @@ impl TimerState {
 #[derive(Debug, Clone, Copy)]
 pub enum PhaseTransition {
     EnterReminding,
-    EnterSneakPeek,
+    EnterObserving,
     EnterHappyExit,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn working_deadline_triggers_reminding() {
+        let mut t = TimerState::new(1, 30, "default".into());
+        t.work_elapsed = Duration::from_secs(60);
+        t.segment_started = None;
+        t.phase = Phase::Working;
+        assert!(matches!(t.tick(), Some(PhaseTransition::EnterReminding)));
+    }
+
+    #[test]
+    fn reminding_advances_to_observing_after_grace() {
+        let mut t = TimerState::new(20, 30, "default".into());
+        t.start_reminding();
+        assert!(t.tick().is_none());
+        thread::sleep(Duration::from_millis(2100));
+        assert!(matches!(t.tick(), Some(PhaseTransition::EnterObserving)));
+    }
+
+    #[test]
+    fn observing_idle_triggers_happy_exit() {
+        let mut t = TimerState::new(20, 1, "default".into());
+        t.start_reminding();
+        t.enter_observing();
+        thread::sleep(Duration::from_millis(1100));
+        assert!(matches!(t.tick(), Some(PhaseTransition::EnterHappyExit)));
+    }
 }

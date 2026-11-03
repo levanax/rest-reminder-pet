@@ -20,6 +20,13 @@ import {
   startRainStreak,
   stopRainStreak,
 } from "./RainStreakRenderer";
+import {
+  isWaterFlowRunning,
+  onWaterFlowResize,
+  setWaterFlowPaused,
+  startWaterFlow,
+  stopWaterFlow,
+} from "./WaterFlowRenderer";
 import { normalizeScene, type ReminderScene, type SnowEventPayload } from "./sceneTypes";
 import {
   isSnowRunning,
@@ -35,7 +42,13 @@ const canvas = document.getElementById("snow") as HTMLCanvasElement;
 let activeScene: ReminderScene | null = null;
 
 function anyRunning() {
-  return isSnowRunning() || isRainGlassRunning() || isRainStreakRunning() || isBlindsRunning();
+  return (
+    isSnowRunning() ||
+    isRainGlassRunning() ||
+    isRainStreakRunning() ||
+    isBlindsRunning() ||
+    isWaterFlowRunning()
+  );
 }
 
 function stopAll() {
@@ -43,6 +56,7 @@ function stopAll() {
   stopRainGlass();
   stopRainStreak();
   stopBlinds();
+  stopWaterFlow();
   activeScene = null;
 }
 
@@ -54,6 +68,8 @@ function startScene(scene: ReminderScene, payload: SnowEventPayload) {
     startRainStreak(canvas);
   } else if (scene === "blinds") {
     startBlinds(canvas);
+  } else if (scene === "waterFlow") {
+    startWaterFlow(canvas);
   } else {
     startSnow(payload);
   }
@@ -67,6 +83,7 @@ async function main() {
     setRainGlassPaused(held);
     setRainStreakPaused(held);
     setBlindsPaused(held);
+    setWaterFlowPaused(held);
   });
 
   await listen<SnowEventPayload>("snow-event", (e) => {
@@ -88,6 +105,7 @@ async function main() {
     onRainGlassResize();
     onRainStreakResize();
     onBlindsResize();
+    onWaterFlowResize();
   });
 }
 

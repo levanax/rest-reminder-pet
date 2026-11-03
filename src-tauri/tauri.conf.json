@@ -14,10 +14,10 @@
     "windows": [
       {
         "label": "pet",
-        "title": "Rest Reminder Pet",
+        "title": "",
         "url": "index.html",
-        "width": 1920,
-        "height": 1080,
+        "width": 88,
+        "height": 88,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -29,7 +29,7 @@
       },
       {
         "label": "snow",
-        "title": "Rest Reminder Pet — Snow",
+        "title": "",
         "url": "snow.html",
         "width": 1920,
         "height": 1080,
@@ -44,7 +44,7 @@
       },
       {
         "label": "summary",
-        "title": "Rest Reminder Pet — Summary",
+        "title": "",
         "url": "summary.html",
         "width": 320,
         "height": 168,
@@ -59,10 +59,10 @@
       },
       {
         "label": "settings",
-        "title": "Rest Reminder Pet",
+        "title": "设置",
         "url": "settings.html",
         "width": 520,
-        "height": 680,
+        "height": 720,
         "resizable": false,
         "visible": false,
         "center": true

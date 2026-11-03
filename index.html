@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Rest Reminder Pet</title>
+    <title></title>
     <style>
       html, body {
         margin: 0;
@@ -13,10 +13,33 @@
         background: transparent !important;
         user-select: none;
       }
+      #app, #pet-shell {
+        width: 100%;
+        height: 100%;
+        cursor: grab;
+      }
+      #pet-shell:active { cursor: grabbing; }
+      .pet-face {
+        width: 100%;
+        height: 100%;
+        display: grid;
+        place-items: center;
+        filter: drop-shadow(0 4px 10px rgba(20, 40, 35, 0.35));
+        transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+      }
+      .dock-left .pet-face { transform: translateX(-42%); }
+      .dock-right .pet-face { transform: translateX(42%); }
+      .dock-top .pet-face { transform: translateY(-42%); }
+      .dock-bottom .pet-face { transform: translateY(42%); }
+      .dock-left .eye-l, .dock-left .eye-r { transform: translateX(3px); }
+      .dock-right .eye-l, .dock-right .eye-r { transform: translateX(-3px); }
+      .dock-top .eye-l, .dock-top .eye-r { transform: translateY(4px); }
+      .dock-bottom .eye-l, .dock-bottom .eye-r { transform: translateY(-3px); }
+      .eye { transform-box: fill-box; transform-origin: center; }
     </style>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/pet/PetApp.ts"></script>
+    <script type="module" src="/src/pet/DesktopPetApp.ts"></script>
   </body>
 </html>

@@ -1,12 +1,18 @@
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
 
 /// Last snow virtual-desktop fingerprint — skip redundant re-emits.
 static LAST_SNOW_FINGERPRINT: Mutex<String> = Mutex::new(String::new());
-/// Active reminder scene for this session (`snow` | `rainGlass` | `rainStreak` | `blinds`).
+/// Active reminder scene for this session.
 static CURRENT_SCENE: Mutex<String> = Mutex::new(String::new());
+
+pub const DESKTOP_PET_SIZE: u32 = 88;
+const EDGE_SNAP_PX: i32 = 28;
 
 #[cfg(windows)]
 fn cursor_pos() -> Option<(i32, i32)> {
@@ -27,11 +33,14 @@ fn cursor_pos() -> Option<(i32, i32)> {
     None
 }
 
-pub fn position_pet_on_mouse_monitor(app: &AppHandle) -> Result<(), String> {
-    let pet = app
-        .get_webview_window("pet")
-        .ok_or_else(|| "找不到 pet 窗口".to_string())?;
+fn pet_window(app: &AppHandle) -> Result<WebviewWindow, String> {
+    app.get_webview_window("pet")
+        .ok_or_else(|| "找不到 pet 窗口".to_string())
+}
 
+/// Place desktop pet near the cursor on its monitor (bottom-right of work area by default).
+pub fn place_desktop_pet_default(app: &AppHandle) -> Result<(), String> {
+    let pet = pet_window(app)?;
     let (cx, cy) = cursor_pos().unwrap_or((0, 0));
     let monitors = app.available_monitors().map_err(|e| e.to_string())?;
     let mut target = app
@@ -39,7 +48,7 @@ pub fn position_pet_on_mouse_monitor(app: &AppHandle) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "无显示器".to_string())?;
 
-    for m in monitors {
+    for m in &monitors {
         let pos = m.position();
         let size = m.size();
         let left = pos.x;
@@ -47,48 +56,152 @@ pub fn position_pet_on_mouse_monitor(app: &AppHandle) -> Result<(), String> {
         let right = left + size.width as i32;
         let bottom = top + size.height as i32;
         if cx >= left && cx < right && cy >= top && cy < bottom {
-            target = m;
+            target = m.clone();
             break;
         }
     }
 
     let pos = target.position();
     let size = target.size();
-    pet.set_position(PhysicalPosition::new(pos.x, pos.y))
+    let x = pos.x + size.width as i32 - DESKTOP_PET_SIZE as i32 - 24;
+    let y = pos.y + size.height as i32 - DESKTOP_PET_SIZE as i32 - 72;
+    pet.set_size(PhysicalSize::new(DESKTOP_PET_SIZE, DESKTOP_PET_SIZE))
         .map_err(|e| e.to_string())?;
-    pet.set_size(PhysicalSize::new(size.width, size.height))
+    pet.set_position(PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())?;
-    pet.set_ignore_cursor_events(true)
+    pet.set_ignore_cursor_events(false)
         .map_err(|e| e.to_string())?;
     pet.set_always_on_top(true).map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn show_pet(app: &AppHandle) -> Result<(), String> {
-    position_pet_on_mouse_monitor(app)?;
+pub fn show_desktop_pet(app: &AppHandle) -> Result<(), String> {
+    ensure_pet_window(app)?;
+    place_desktop_pet_default(app)?;
     let pet = pet_window(app)?;
     pet.show().map_err(|e| e.to_string())?;
+    let _ = app.emit("desktop-pet-event", serde_json::json!({ "visible": true }));
     Ok(())
 }
 
-pub fn hide_pet(app: &AppHandle) -> Result<(), String> {
+pub fn hide_desktop_pet(app: &AppHandle) -> Result<(), String> {
+    if let Some(pet) = app.get_webview_window("pet") {
+        pet.hide().map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit(
+        "desktop-pet-event",
+        serde_json::json!({ "visible": false }),
+    );
+    Ok(())
+}
+
+pub fn set_desktop_pet_position(app: &AppHandle, x: i32, y: i32) -> Result<(), String> {
     let pet = pet_window(app)?;
-    pet.hide().map_err(|e| e.to_string())?;
+    pet.set_position(PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-fn pet_window(app: &AppHandle) -> Result<WebviewWindow, String> {
-    app.get_webview_window("pet")
-        .ok_or_else(|| "找不到 pet 窗口".to_string())
+/// Snap pet to nearest screen edge if within threshold; returns dock side for peeping pose.
+pub fn snap_desktop_pet(app: &AppHandle) -> Result<serde_json::Value, String> {
+    let pet = pet_window(app)?;
+    let pos = pet.outer_position().map_err(|e| e.to_string())?;
+    let size = pet.outer_size().map_err(|e| e.to_string())?;
+    let monitors = app.available_monitors().map_err(|e| e.to_string())?;
+
+    let cx = pos.x + size.width as i32 / 2;
+    let cy = pos.y + size.height as i32 / 2;
+    let mut target = app
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "无显示器".to_string())?;
+    for m in &monitors {
+        let mp = m.position();
+        let ms = m.size();
+        if cx >= mp.x
+            && cx < mp.x + ms.width as i32
+            && cy >= mp.y
+            && cy < mp.y + ms.height as i32
+        {
+            target = m.clone();
+            break;
+        }
+    }
+
+    let mp = target.position();
+    let ms = target.size();
+    let left = mp.x;
+    let top = mp.y;
+    let right = left + ms.width as i32;
+    let bottom = top + ms.height as i32;
+    let pet_w = size.width as i32;
+    let pet_h = size.height as i32;
+
+    let dist_l = (pos.x - left).abs();
+    let dist_r = ((pos.x + pet_w) - right).abs();
+    let dist_t = (pos.y - top).abs();
+    let dist_b = ((pos.y + pet_h) - bottom).abs();
+
+    let mut dock = "none";
+    let mut nx = pos.x;
+    let mut ny = pos.y;
+    let min_d = dist_l.min(dist_r).min(dist_t).min(dist_b);
+    if min_d <= EDGE_SNAP_PX {
+        if min_d == dist_l {
+            dock = "left";
+            nx = left - pet_w / 2;
+            ny = pos.y.clamp(top, bottom - pet_h);
+        } else if min_d == dist_r {
+            dock = "right";
+            nx = right - pet_w / 2;
+            ny = pos.y.clamp(top, bottom - pet_h);
+        } else if min_d == dist_t {
+            dock = "top";
+            ny = top - pet_h / 2;
+            nx = pos.x.clamp(left, right - pet_w);
+        } else {
+            dock = "bottom";
+            ny = bottom - pet_h / 2;
+            nx = pos.x.clamp(left, right - pet_w);
+        }
+        pet.set_position(PhysicalPosition::new(nx, ny))
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(serde_json::json!({
+        "dock": dock,
+        "x": nx,
+        "y": ny,
+    }))
 }
 
-/// Physical layout of the snow overlay relative to the virtual desktop origin.
+fn ensure_pet_window(app: &AppHandle) -> Result<(), String> {
+    if app.get_webview_window("pet").is_some() {
+        return Ok(());
+    }
+    let url = WebviewUrl::App("index.html".into());
+    WebviewWindowBuilder::new(app, "pet", url)
+        .title("")
+        .inner_size(DESKTOP_PET_SIZE as f64, DESKTOP_PET_SIZE as f64)
+        .decorations(false)
+        .transparent(true)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .visible(false)
+        .shadow(false)
+        .focused(false)
+        .resizable(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Cover the full virtual desktop (all monitors) for the snowfall layer.
 struct SnowLayout {
     min_x: i32,
     min_y: i32,
     width: u32,
     height: u32,
-    /// Monitor rects in physical pixels, relative to (min_x, min_y).
     monitors: Vec<serde_json::Value>,
 }
 
@@ -167,7 +280,6 @@ fn emit_snow_active(app: &AppHandle, layout: &SnowLayout) {
     );
 }
 
-/// Cover the full virtual desktop (all monitors) for the snowfall layer.
 fn position_snow_all_monitors(app: &AppHandle) -> Result<SnowLayout, String> {
     let snow = app
         .get_webview_window("snow")
@@ -189,8 +301,6 @@ fn snow_window_visible(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-/// Re-query monitors, resize/reposition the snow window, and notify the WebView.
-/// Used after RDP / display topology changes so pile bottoms stay on each screen edge.
 pub fn refresh_snow_layout(app: &AppHandle) -> Result<(), String> {
     if !snow_window_visible(app) {
         return Ok(());
@@ -200,7 +310,6 @@ pub fn refresh_snow_layout(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Like refresh_snow_layout, but skips emit when geometry fingerprint is unchanged.
 pub fn refresh_snow_layout_if_changed(app: &AppHandle) -> Result<(), String> {
     if !snow_window_visible(app) {
         return Ok(());
@@ -224,6 +333,7 @@ pub fn show_snow(app: &AppHandle, scene: &str) -> Result<(), String> {
         "rainGlass" => "rainGlass",
         "rainStreak" => "rainStreak",
         "blinds" => "blinds",
+        "waterFlow" => "waterFlow",
         _ => "snow",
     };
     if let Ok(mut cur) = CURRENT_SCENE.lock() {
@@ -237,14 +347,14 @@ pub fn show_snow(app: &AppHandle, scene: &str) -> Result<(), String> {
         .get_webview_window("snow")
         .ok_or_else(|| "找不到 snow 窗口".to_string())?;
     snow.show().map_err(|e| e.to_string())?;
+    snow.set_always_on_top(true).map_err(|e| e.to_string())?;
     emit_snow_active(app, &layout);
 
-    // RDP / DPI: WebView often still reports the old innerWidth/Height when the first
-    // event arrives. Re-apply layout a few times after the OS finishes resizing.
+    // 前端可能尚未挂上监听：多次补发，避免丢首帧事件导致「有状态无景致」
     let app_delayed = app.clone();
     thread::spawn(move || {
         let mut elapsed = 0u64;
-        for at_ms in [80u64, 200, 500] {
+        for at_ms in [80u64, 200, 500, 1200] {
             thread::sleep(Duration::from_millis(at_ms.saturating_sub(elapsed)));
             elapsed = at_ms;
             let _ = refresh_snow_layout(&app_delayed);
@@ -324,11 +434,35 @@ pub fn hide_summary(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+fn attach_settings_close_destroy(window: &WebviewWindow) {
+    let label = window.label().to_string();
+    window.on_window_event(move |event| {
+        if let tauri::WindowEvent::CloseRequested { .. } = event {
+            // allow destroy — window will be recreated on next open
+            let _ = label.as_str();
+        }
+    });
+}
+
 pub fn show_settings(app: &AppHandle, tab: &str) -> Result<(), String> {
     let tab = match tab {
         "settings" => "settings",
         _ => "today",
     };
+
+    if app.get_webview_window("settings").is_none() {
+        let url = WebviewUrl::App("settings.html".into());
+        let window = WebviewWindowBuilder::new(app, "settings", url)
+            .title("设置")
+            .inner_size(520.0, 720.0)
+            .resizable(false)
+            .visible(false)
+            .center()
+            .build()
+            .map_err(|e| e.to_string())?;
+        attach_settings_close_destroy(&window);
+    }
+
     let w = app
         .get_webview_window("settings")
         .ok_or_else(|| "找不到 settings 窗口".to_string())?;

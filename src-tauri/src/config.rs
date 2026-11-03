@@ -26,18 +26,40 @@ impl Default for WanxiangConfig {
 pub struct AppConfig {
     pub work_minutes: u32,
     pub observation_seconds: u32,
-    /// 休息提醒时飘雪持续秒数（与小猫退场独立）
+    /// 休息提醒时飘雪持续秒数（与桌宠退场独立）
     #[serde(default = "default_snow_seconds")]
     pub snow_seconds: u32,
-    /// 提醒景致：random | snow | rainGlass | rainStreak | blinds
+    /// 提醒景致：random | snow | rainGlass | rainStreak | blinds | waterFlow
     #[serde(default = "default_reminder_scene")]
     pub reminder_scene: String,
+    #[serde(default = "default_character_pack")]
     pub character_pack: String,
-    /// 桌宠屏上显示边长上限（像素），资源分辨率不变，仅缩放显示
+    /// 桌宠屏上显示边长上限（像素），兼容旧配置
     #[serde(default = "default_display_max_px")]
     pub display_max_px: u32,
     pub autostart: bool,
     pub wanxiang: WanxiangConfig,
+    /// 是否显示常驻桌宠浮窗
+    #[serde(default = "default_true")]
+    pub desktop_pet_enabled: bool,
+    /// 内存过高时自动关闭桌宠
+    #[serde(default = "default_true")]
+    pub desktop_pet_memory_guard: bool,
+    /// 系统内存占用达到该百分比时关闭桌宠
+    #[serde(default = "default_memory_threshold")]
+    pub desktop_pet_memory_threshold: u32,
+}
+
+fn default_character_pack() -> String {
+    "default".into()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_memory_threshold() -> u32 {
+    85
 }
 
 fn default_snow_seconds() -> u32 {
@@ -54,7 +76,9 @@ fn default_display_max_px() -> u32 {
 
 pub fn normalize_reminder_scene(raw: &str) -> String {
     match raw {
-        "snow" | "rainGlass" | "rainStreak" | "blinds" | "random" => raw.to_string(),
+        "snow" | "rainGlass" | "rainStreak" | "blinds" | "waterFlow" | "random" => {
+            raw.to_string()
+        }
         _ => default_reminder_scene(),
     }
 }
@@ -66,10 +90,13 @@ impl Default for AppConfig {
             observation_seconds: 30,
             snow_seconds: default_snow_seconds(),
             reminder_scene: default_reminder_scene(),
-            character_pack: "default".into(),
+            character_pack: default_character_pack(),
             display_max_px: default_display_max_px(),
             autostart: false,
             wanxiang: WanxiangConfig::default(),
+            desktop_pet_enabled: true,
+            desktop_pet_memory_guard: true,
+            desktop_pet_memory_threshold: default_memory_threshold(),
         }
     }
 }
@@ -106,6 +133,8 @@ pub fn load_config() -> AppConfig {
             cfg.snow_seconds = cfg.snow_seconds.clamp(30, 600);
             cfg.reminder_scene = normalize_reminder_scene(&cfg.reminder_scene);
             cfg.display_max_px = cfg.display_max_px.clamp(48, 192);
+            cfg.desktop_pet_memory_threshold =
+                cfg.desktop_pet_memory_threshold.clamp(50, 99);
             return cfg;
         }
     }
